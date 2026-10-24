@@ -13,9 +13,9 @@ This package copies the existing Mac lab into the Pi fork namespace. Its smoke a
 
 ## Run
 
-The root's existing `packages/*` workspace pattern includes this package. Its three exact 1.4.0 dependencies use the sibling `durable`, `ai`, and `chord` workspaces, not separate registry installations. Verify the links with `npm query .workspace`.
+At the fork root, run `npm ci --ignore-scripts`, then `npm run build`. This lab lives under `throughline/`, outside the root's `packages/*` and `apps/*` workspace patterns, so it adds no entry to the stock root lockfile.
 
-The prescribed `npm ci --ignore-scripts` currently refuses because the stock root lockfile does not contain this new workspace. The lockfile is deliberately unchanged: updating it would violate this order's zero-upstream-edit boundary without a separate advance approval. Local hydration uses `npm install --ignore-scripts --package-lock=false`; this is not a passing clean-install check. After hydration, run `npm run build`. The work-order receipt records the actual install, build, and test results.
+From this folder, run `npm ci --ignore-scripts`, then `npm run build`. The lab has its own package manifest, lockfile, and TypeScript build, which emits ignored files under `dist/`. Its `file:` dependencies link directly to the fork's `packages/durable`, `packages/ai`, and `packages/chord`, each at version 1.4.0. Their runtime dependencies come from the root install; no separate registry copy of Pi Durable is installed. To refresh this lab's dependency metadata, run `npm install --ignore-scripts` here and review only this folder's lockfile.
 
 From this folder, run `node smoke.ts first`, then `node smoke.ts second`, starting with no `data/smoke.sqlite`. Both processes use that same database. Runtime output stays under the locally ignored `data/` folder. The second process must reopen the conversation, reuse the pending submission ID, finish the input, and retain six history entries.
 

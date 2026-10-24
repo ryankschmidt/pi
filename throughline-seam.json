@@ -277,11 +277,11 @@
       "owner_component": "pi-harness"
     },
     {
-      "path": "/Users/Admin/core-root/vault/01_Projects/workbench/infra/pi-harness/pi/packages/throughline-extensions/rtk/rtk.ts",
+      "path": "/Users/Admin/core-root/vault/01_Projects/workbench/infra/pi-harness/pi/throughline/extensions/rtk/rtk.ts",
       "runtime_path": "/Users/Admin/.pi/agent/extensions/rtk.ts",
-      "tier1_source": "/Users/Admin/core-root/vault/01_Projects/workbench/infra/pi-harness/pi/packages/throughline-extensions/rtk/rtk.ts",
-      "what": "RTK bash-rewrite extension; copied byte-exact after the bounded Tier 1 source search found no source",
-      "owner_component": "pi/packages/throughline-extensions/rtk"
+      "tier1_source": "/Users/Admin/core-root/vault/01_Projects/workbench/infra/pi-harness/pi/throughline/extensions/rtk/rtk.ts",
+      "what": "RTK bash-rewrite extension; byte-exact Tier 1 copy under the fork namespace; installed file left unchanged",
+      "owner_component": "pi/throughline/extensions/rtk"
     },
     {
       "path": "/Users/Admin/core-root/vault/01_Projects/workbench/tools/subscription-images/src/pi-extension.ts",
@@ -353,14 +353,24 @@
           "packages/throughline-durable-lab/evidence/second-2026-10-22.json",
           "packages/throughline-durable-lab/package.json",
           "packages/throughline-durable-lab/probe-rail.ts",
-          "packages/throughline-durable-lab/smoke.ts"
+          "packages/throughline-durable-lab/smoke.ts",
+          "throughline/durable-lab/.gitignore",
+          "throughline/durable-lab/README.md",
+          "throughline/durable-lab/evidence/first-2026-10-22.json",
+          "throughline/durable-lab/evidence/second-2026-10-22.json",
+          "throughline/durable-lab/package.json",
+          "throughline/durable-lab/package-lock.json",
+          "throughline/durable-lab/probe-rail.ts",
+          "throughline/durable-lab/smoke.ts",
+          "throughline/durable-lab/tsconfig.json"
         ]
       },
       {
         "name": "rtk-extension",
         "rule": "Retain the fork-owned RTK extension source; runtime loading and behavioral proof remain separate from this exact-path coverage declaration.",
         "paths": [
-          "packages/throughline-extensions/rtk/rtk.ts"
+          "packages/throughline-extensions/rtk/rtk.ts",
+          "throughline/extensions/rtk/rtk.ts"
         ]
       }
     ]

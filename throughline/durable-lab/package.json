@@ -1,0 +1,21 @@
+{
+  "name": "@throughline/pi-durable-lab",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Credential-free Pi Durable recovery lab using the fork's 1.4.0 workspace packages.",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "build": "tsc --noEmit --project tsconfig.json",
+    "smoke": "node smoke.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-durable": "file:../../packages/durable",
+    "@earendil-works/pi-ai": "file:../../packages/ai",
+    "@earendil-works/chord": "file:../../packages/chord"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "typescript": "7.0.2"
+  }
+}
