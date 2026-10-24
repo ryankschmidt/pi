@@ -5,14 +5,14 @@
     "sha": "4a080252f06caf63a525d7873c5d94d3c23887e0"
   },
   "fork": {
-    "sha": "9487816f33050b3b6aba108dce5d87a291055c19"
+    "sha": "37bc9cada820db6a4fe0c093f473e5530dc801da"
   },
   "merge_base": "4a080252f06caf63a525d7873c5d94d3c23887e0",
   "counts": {
     "upstream_edit": 0,
     "upstream_removed": 0,
     "fork_added": 0,
-    "fork_namespace": 4
+    "fork_namespace": 12
   },
   "admitted": {
     "upstream_edit_count": 0,
@@ -58,9 +58,9 @@
       "legacy_rules": []
     },
     {
-      "path": "throughline-seam.json",
+      "path": "packages/throughline-durable-lab/.gitignore",
       "class": "fork-namespace",
-      "reason": "9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
+      "reason": "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -70,6 +70,143 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "packages/throughline-durable-lab/evidence/first-2026-10-22.json",
+      "class": "fork-namespace",
+      "reason": "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "packages/throughline-durable-lab/evidence/second-2026-10-22.json",
+      "class": "fork-namespace",
+      "reason": "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "packages/throughline-durable-lab/package.json",
+      "class": "fork-namespace",
+      "reason": "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "packages/throughline-durable-lab/probe-rail.ts",
+      "class": "fork-namespace",
+      "reason": "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "packages/throughline-durable-lab/README.md",
+      "class": "fork-namespace",
+      "reason": "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "packages/throughline-durable-lab/smoke.ts",
+      "class": "fork-namespace",
+      "reason": "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "packages/throughline-extensions/rtk/rtk.ts",
+      "class": "fork-namespace",
+      "reason": "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline-seam.json",
+      "class": "fork-namespace",
+      "reason": "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record",
         "9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission",
         "7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook"
       ],
@@ -192,5 +329,40 @@
     "pinned_upstream": "4a080252f06caf63a525d7873c5d94d3c23887e0",
     "approved_growth_files": [],
     "approved_swap_files": []
+  },
+  "coverage": {
+    "schema": "throughline.seam-coverage.v1",
+    "capabilities": [
+      {
+        "name": "repository-seam-controls",
+        "rule": "Retain the repository seam ledger, approval guidance and pre-commit tax gate; review changes against the pinned zero-tax contract.",
+        "paths": [
+          "docs/throughline/README.json",
+          "docs/throughline/tax-approvals/README.json",
+          "throughline-seam.json",
+          "throughline/hooks/pre-commit"
+        ]
+      },
+      {
+        "name": "durable-lab",
+        "rule": "Retain the fork-owned durable-lab experiment sources and recorded evidence; behavior and acceptance remain separate from this exact-path coverage declaration.",
+        "paths": [
+          "packages/throughline-durable-lab/.gitignore",
+          "packages/throughline-durable-lab/README.md",
+          "packages/throughline-durable-lab/evidence/first-2026-10-22.json",
+          "packages/throughline-durable-lab/evidence/second-2026-10-22.json",
+          "packages/throughline-durable-lab/package.json",
+          "packages/throughline-durable-lab/probe-rail.ts",
+          "packages/throughline-durable-lab/smoke.ts"
+        ]
+      },
+      {
+        "name": "rtk-extension",
+        "rule": "Retain the fork-owned RTK extension source; runtime loading and behavioral proof remain separate from this exact-path coverage declaration.",
+        "paths": [
+          "packages/throughline-extensions/rtk/rtk.ts"
+        ]
+      }
+    ]
   }
 }
