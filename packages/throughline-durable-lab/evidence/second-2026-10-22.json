@@ -1,0 +1,17 @@
+{
+  "phase": "second",
+  "at": "2026-10-22T12:15:19.209Z",
+  "conversation": 1,
+  "model": "faux/faux-1",
+  "resubmitted_submission": 14,
+  "second": "done",
+  "stored_entries": [
+    "pi.user",
+    "pi.assistant",
+    "pi.reset",
+    "pi.user",
+    "pi.system",
+    "pi.assistant"
+  ],
+  "active_context_messages": 4
+}

@@ -5,7 +5,7 @@
     "sha": "4a080252f06caf63a525d7873c5d94d3c23887e0"
   },
   "fork": {
-    "sha": "7c0dc94e73dbce8a7b265bd6d370275cc67dfd84"
+    "sha": "9487816f33050b3b6aba108dce5d87a291055c19"
   },
   "merge_base": "4a080252f06caf63a525d7873c5d94d3c23887e0",
   "counts": {
@@ -13,6 +13,14 @@
     "upstream_removed": 0,
     "fork_added": 0,
     "fork_namespace": 4
+  },
+  "admitted": {
+    "upstream_edit_count": 0,
+    "fork_added_count": 0,
+    "uncovered_fork_path_count": 4,
+    "fork_sha": "7c0dc94e73dbce8a7b265bd6d370275cc67dfd84",
+    "admitted_at": "2026-10-24T12:44:34.291Z",
+    "admitted_by": "01a16de5-cc29-7790-80e0-22169ed3e2af"
   },
   "entries": [
     {
@@ -52,7 +60,7 @@
     {
       "path": "throughline-seam.json",
       "class": "fork-namespace",
-      "reason": "7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
+      "reason": "9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -62,6 +70,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission",
         "7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook"
       ],
       "legacy_rules": []
@@ -124,19 +133,25 @@
   },
   "external_customizations": [
     {
-      "path": "/Users/Admin/.pi/agent/extensions/pi-lead-boundary.js",
-      "what": "Installed extension; Tier 1 source resolution belongs to WO-08",
+      "path": "/Users/Admin/core-root/vault/01_Projects/workbench/infra/pi-harness/_meta/pi-lead-bootstrap-2026-10-16/pi-lead-boundary.ts",
+      "runtime_path": "/Users/Admin/.pi/agent/extensions/pi-lead-boundary.js",
+      "tier1_source": "/Users/Admin/core-root/vault/01_Projects/workbench/infra/pi-harness/_meta/pi-lead-bootstrap-2026-10-16/pi-lead-boundary.ts",
+      "what": "Pi lead handoff boundary extension; installed bytes match the compiled JavaScript beside its Tier 1 source",
       "owner_component": "pi-harness"
     },
     {
-      "path": "/Users/Admin/.pi/agent/extensions/rtk.ts",
-      "what": "Installed extension; Tier 1 source resolution belongs to WO-08",
-      "owner_component": "pi-harness"
+      "path": "/Users/Admin/core-root/vault/01_Projects/workbench/infra/pi-harness/pi/packages/throughline-extensions/rtk/rtk.ts",
+      "runtime_path": "/Users/Admin/.pi/agent/extensions/rtk.ts",
+      "tier1_source": "/Users/Admin/core-root/vault/01_Projects/workbench/infra/pi-harness/pi/packages/throughline-extensions/rtk/rtk.ts",
+      "what": "RTK bash-rewrite extension; copied byte-exact after the bounded Tier 1 source search found no source",
+      "owner_component": "pi/packages/throughline-extensions/rtk"
     },
     {
-      "path": "/Users/Admin/.pi/agent/extensions/subscription-images.js",
-      "what": "Installed extension; Tier 1 source resolution belongs to WO-08",
-      "owner_component": "pi-harness"
+      "path": "/Users/Admin/core-root/vault/01_Projects/workbench/tools/subscription-images/src/pi-extension.ts",
+      "runtime_path": "/Users/Admin/.pi/agent/extensions/subscription-images.js",
+      "tier1_source": "/Users/Admin/core-root/vault/01_Projects/workbench/tools/subscription-images/src/pi-extension.ts",
+      "what": "Subscription-image extension; runtime-targets declares its generated autoload bundle and installed bytes match that bundle",
+      "owner_component": "subscription-images"
     },
     {
       "path": "/Users/Admin/.pi/agent/settings.json",
@@ -162,6 +177,11 @@
       "path": "/Users/Admin/throughline/packages/provider-pi",
       "what": "ThroughLine Pi provider",
       "owner_component": "ThroughLine fork"
+    },
+    {
+      "path": "/Users/Admin/.local/share/pi/versions",
+      "what": "Versioned Pi installations; existence observed during WO-08, installation and pin ownership belong to WO-09",
+      "owner_component": "provider-version-pin"
     }
   ],
   "tax_policy": {
@@ -172,13 +192,5 @@
     "pinned_upstream": "4a080252f06caf63a525d7873c5d94d3c23887e0",
     "approved_growth_files": [],
     "approved_swap_files": []
-  },
-  "admitted": {
-    "upstream_edit_count": 0,
-    "fork_added_count": 0,
-    "uncovered_fork_path_count": 4,
-    "fork_sha": "7c0dc94e73dbce8a7b265bd6d370275cc67dfd84",
-    "admitted_at": "2026-10-24T12:44:34.291Z",
-    "admitted_by": "01a16de5-cc29-7790-80e0-22169ed3e2af"
   }
 }

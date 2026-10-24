@@ -1,0 +1,36 @@
+{
+  "phase": "first",
+  "at": "2026-10-22T12:15:13.956Z",
+  "conversation": 1,
+  "model": "faux/faux-1",
+  "first": "done",
+  "answer": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Paris."
+      }
+    ],
+    "api": "faux:1792671313910:1g10nab2f91",
+    "provider": "faux",
+    "model": "faux-1",
+    "usage": {
+      "input": 9,
+      "output": 2,
+      "cacheRead": 0,
+      "cacheWrite": 9,
+      "totalTokens": 20,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "stop",
+    "timestamp": 1792671313971
+  },
+  "pending_submission": 14
+}
