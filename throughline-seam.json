@@ -1,0 +1,98 @@
+{
+  "schema": "throughline.seam-manifest.v1",
+  "upstream": {
+    "remote_url": "https://github.com/earendil-works/pi.git",
+    "sha": "4a080252f06caf63a525d7873c5d94d3c23887e0"
+  },
+  "fork": {
+    "sha": "4a080252f06caf63a525d7873c5d94d3c23887e0"
+  },
+  "merge_base": "4a080252f06caf63a525d7873c5d94d3c23887e0",
+  "counts": {
+    "upstream_edit": 0,
+    "upstream_removed": 0,
+    "fork_added": 0,
+    "fork_namespace": 0
+  },
+  "entries": [],
+  "upstream_changes": [],
+  "conflict_rules": {
+    "default": "review",
+    "capability_paths": "retain-fork-and-run-capability-tests"
+  },
+  "migration": {
+    "ship_seams": {
+      "source": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rules": [],
+      "resolutions": []
+    },
+    "projector": {
+      "source": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "capabilities": []
+  },
+  "repository": {
+    "product": "pi",
+    "origin": "https://github.com/ryankschmidt/pi.git",
+    "upstream": "https://github.com/earendil-works/pi.git",
+    "upstream_pin": {
+      "kind": "tag",
+      "ref": "v1.4.0",
+      "sha": "4a080252f06caf63a525d7873c5d94d3c23887e0"
+    },
+    "design_start_commit": "4a080252f06caf63a525d7873c5d94d3c23887e0",
+    "namespace_patterns": [
+      "^packages/throughline-[^/]+/",
+      "^throughline/"
+    ],
+    "approval_dir": "docs/throughline/tax-approvals/",
+    "sanctioned_non_namespace": [
+      "throughline-seam.json",
+      "docs/throughline/"
+    ]
+  },
+  "external_customizations": [
+    {
+      "path": "/Users/Admin/.pi/agent/extensions/pi-lead-boundary.js",
+      "what": "Installed extension; Tier 1 source resolution belongs to WO-08",
+      "owner_component": "pi-harness"
+    },
+    {
+      "path": "/Users/Admin/.pi/agent/extensions/rtk.ts",
+      "what": "Installed extension; Tier 1 source resolution belongs to WO-08",
+      "owner_component": "pi-harness"
+    },
+    {
+      "path": "/Users/Admin/.pi/agent/extensions/subscription-images.js",
+      "what": "Installed extension; Tier 1 source resolution belongs to WO-08",
+      "owner_component": "pi-harness"
+    },
+    {
+      "path": "/Users/Admin/.pi/agent/settings.json",
+      "what": "Configuration: existence only, contents not read",
+      "owner_component": "first-class-command-layer and model-roll"
+    },
+    {
+      "path": "/Users/Admin/.pi/agent/models.json",
+      "what": "Configuration: existence only, contents not read",
+      "owner_component": "first-class-command-layer and model-roll"
+    },
+    {
+      "path": "/Users/Admin/.pi/agent/APPEND_SYSTEM.md",
+      "what": "Configuration: existence only, contents not read",
+      "owner_component": "first-class-command-layer and model-roll"
+    },
+    {
+      "path": "/Users/Admin/.local/bin/ryan-pi",
+      "what": "Pi launcher",
+      "owner_component": "first-class-command-layer"
+    },
+    {
+      "path": "/Users/Admin/throughline/packages/provider-pi",
+      "what": "ThroughLine Pi provider",
+      "owner_component": "ThroughLine fork"
+    }
+  ]
+}

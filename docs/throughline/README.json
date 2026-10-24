@@ -1,0 +1,7 @@
+{
+  "purpose": "Fork navigation and seam policy",
+  "ledger": "../../throughline-seam.json",
+  "namespace": "throughline",
+  "checker": "/Users/Admin/core-root/vault/01_Projects/workbench/tools/throughline-ship/dist/seam-check.js",
+  "installed_checker_after_shipping": "/Users/Admin/core-root/src/tools/throughline-ship/dist/seam-check.js"
+}
