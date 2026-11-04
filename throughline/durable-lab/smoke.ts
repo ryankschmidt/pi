@@ -1,4 +1,4 @@
-// Smoke test for the Pi Durable 1.4.0 lab install, run as two separate processes against one SQLite file.
+// Smoke test for the Pi Durable 1.5.0 lab install, run as two separate processes against one SQLite file.
 // The free in-memory "faux" model answers, so no key and no spend. Automatic compaction is off.
 //   node smoke.ts first   -> answer one input, reset with a handoff note, submit a second input, exit before it runs
 //   node smoke.ts second  -> reopen, resume the unfinished input, resubmit its request id, check it was not doubled
