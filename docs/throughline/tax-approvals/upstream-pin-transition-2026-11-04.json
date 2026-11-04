@@ -1,0 +1,13 @@
+{
+  "schema": "throughline.upstream-pin-transition.v1",
+  "requested_by": "worker-pifold, Claude Opus 5.5, session 0f1869d6-0f85-43ac-a336-36ce170bf2c6 (built the fold)",
+  "approved_by": "validator child of worker-pifold, Claude Opus 5.5 at medium effort (Agent tool subagent); did not write any line of the fold; checked staged tree 8b2ebce18ce37ebe404b5b4044ee6c34b8056dda: only fork-namespace paths differ from v1.5.0, packages/env and packages/durable read 1.5.0 unchanged from upstream",
+  "reason": "Ryan, Nov 4, 2026: 'Bounce. I have shapes against this. Find which ones you violated and do what they say, please.' The governed Pi and Pi Durable on the Mac are 1.5.0 while this fork sat on v1.4.0. The pinned upstream moves from v1.4.0 (4a080252f0) to v1.5.0 (f9a2636556). The count at the new pin is re-measured by the tool, never read from this file; it is 0, the same zero baseline.",
+  "from_pin": "4a080252f06caf63a525d7873c5d94d3c23887e0",
+  "to_pin": "f9a26365568127461c47a07a37dcb42c140a3ac5",
+  "merge_parent": "ffa290abeff17e5aab57cee86cc85db899cd0ea9",
+  "max_count": 0,
+  "target_count_unchanged": 0,
+  "approved_at": "2026-11-04T11:29:07Z",
+  "approved_at_pacific": "Nov 4, 2026, 3:29 AM PST"
+}
