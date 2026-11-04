@@ -1,0 +1,17 @@
+{
+  "name": "@throughline/pi-durable-provider",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ThroughLine's opt-in Mac Pi Durable execution owner and Tower record adapter boundary.",
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "file:../../packages/chord",
+    "@earendil-works/pi-ai": "file:../../packages/ai",
+    "@earendil-works/pi-durable": "file:../../packages/durable",
+    "@earendil-works/pi-schema": "file:../../packages/schema"
+  }
+}
