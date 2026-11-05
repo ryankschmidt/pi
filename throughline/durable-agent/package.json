@@ -1,0 +1,12 @@
+{
+  "name": "@throughline/pi-durable-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Pi Durable agent program: one process per agent store, serving Pi Durable calls as JSON lines over stdin and stdout.",
+  "bin": { "pi-durable-agent": "src/main.ts" },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "../../node_modules/.bin/tsc --noEmit -p tsconfig.json"
+  }
+}
