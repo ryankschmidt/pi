@@ -221,10 +221,18 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				case "abort":
 					await conversation.abort(context);
 					return { aborted: true };
-				case "compact":
-					return {
-						taskId: await conversation.compact(params.instructions as string | undefined, context),
-					};
+				case "compact": {
+					const taskId = await conversation.compact(params.instructions as string | undefined, context);
+					// With `wait`, answer once the compaction task is no longer live, so the client can end its turn.
+					if (params.wait === true) {
+						for (;;) {
+							const inspection = await opened.inspect(context);
+							if (!inspection.tasks.some((task) => task.record.id === taskId)) break;
+							await new Promise((resolve) => setTimeout(resolve, 250));
+						}
+					}
+					return { taskId };
+				}
 				case "fork": {
 					const fork = await conversation.fork(
 						params.entryId as EntryId,
@@ -291,13 +299,14 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				}
 				case "configure": {
 					if (approvals && typeof params.runtimeMode === "string") approvals.mode = params.runtimeMode as RuntimeMode;
-					const change: { model?: { provider: string; modelId: string }; thinkingLevel?: string } = {};
+					const change: { model?: { provider: string; modelId: string }; thinkingLevel?: string; instructions?: string } = {};
 					if (typeof params.model === "string") {
 						const slash = params.model.indexOf("/");
 						if (slash <= 0) throw new Error(`MODEL_NOT_PROVIDER_SLASH_MODEL: ${params.model}`);
 						change.model = { provider: params.model.slice(0, slash), modelId: params.model.slice(slash + 1) };
 					}
 					if (typeof params.thinkingLevel === "string") change.thinkingLevel = params.thinkingLevel;
+					if (typeof params.instructions === "string") change.instructions = params.instructions;
 					if (Object.keys(change).length > 0) await conversation.configure(change as AgentChange, context);
 					const agent = await conversation.agent(context);
 					return { model: agent.model ?? null, thinkingLevel: agent.thinkingLevel };
