@@ -5,14 +5,14 @@
     "sha": "f9a26365568127461c47a07a37dcb42c140a3ac5"
   },
   "fork": {
-    "sha": "47d5f0b6372a0d8a5461ffb00b9de7bdc3fca7f1"
+    "sha": "468f73ece2a3d3b90c56177958de9491507aed08"
   },
   "merge_base": "f9a26365568127461c47a07a37dcb42c140a3ac5",
   "counts": {
     "upstream_edit": 0,
     "upstream_removed": 0,
     "fork_added": 0,
-    "fork_namespace": 33
+    "fork_namespace": 50
   },
   "admitted": {
     "upstream_edit_count": 0,
@@ -79,7 +79,7 @@
     {
       "path": "throughline-seam.json",
       "class": "fork-namespace",
-      "reason": "34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)\nffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage\na7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces\n8360421492bba5ca62c3edd7ed5c148b1095e4bd seam: declare exact product coverage and regenerate twelve-path ledger\n37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
+      "reason": "0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths\n34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)\nffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage\na7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces\n8360421492bba5ca62c3edd7ed5c148b1095e4bd seam: declare exact product coverage and regenerate twelve-path ledger\n37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -89,6 +89,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths",
         "34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)",
         "ffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage",
         "a7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces",
@@ -96,6 +97,295 @@
         "37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record",
         "9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission",
         "7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/package.json",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/proof/decide.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/proof/inspect.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/proof/kill-proof.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/proof/provider-probe.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/proof/stream-probe.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/README.md",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/src/client.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/src/lock.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/src/main.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/src/program.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/src/protocol.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/src/setup.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/src/transcript.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/test/fixtures/faux-program.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/test/program.test.ts",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/tsconfig.json",
+      "class": "fork-namespace",
+      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
       ],
       "legacy_rules": []
     },
@@ -785,6 +1075,29 @@
           "throughline/durable-provider/test/owner.test.ts",
           "throughline/durable-provider/test/recovery.test.ts",
           "throughline/durable-provider/tsconfig.json"
+        ]
+      },
+      {
+        "name": "durable-agent-program",
+        "rule": "Retain the fork-owned Pi Durable agent program (build 1 of map v3, Nov 4, 2026): one process per agent store serving Pi Durable calls as JSON lines. Behavior proof lives in its proof folder and receipt; acceptance remains separate from this exact-path coverage declaration.",
+        "paths": [
+          "throughline/durable-agent/README.md",
+          "throughline/durable-agent/package.json",
+          "throughline/durable-agent/proof/decide.ts",
+          "throughline/durable-agent/proof/inspect.ts",
+          "throughline/durable-agent/proof/kill-proof.ts",
+          "throughline/durable-agent/proof/provider-probe.ts",
+          "throughline/durable-agent/proof/stream-probe.ts",
+          "throughline/durable-agent/src/client.ts",
+          "throughline/durable-agent/src/lock.ts",
+          "throughline/durable-agent/src/main.ts",
+          "throughline/durable-agent/src/program.ts",
+          "throughline/durable-agent/src/protocol.ts",
+          "throughline/durable-agent/src/setup.ts",
+          "throughline/durable-agent/src/transcript.ts",
+          "throughline/durable-agent/test/fixtures/faux-program.ts",
+          "throughline/durable-agent/test/program.test.ts",
+          "throughline/durable-agent/tsconfig.json"
         ]
       }
     ]
