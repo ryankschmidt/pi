@@ -23,6 +23,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { lockStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
+import { reapLeftovers, startReaper } from "./reaper.ts";
 import {
 	type Call,
 	ENGINE,
@@ -70,6 +71,8 @@ export type ProgramOptions = {
 	output: Writable;
 	/** Diagnostics; never the client's channel. */
 	log?: (line: string) => void;
+	/** Kill commands an earlier killed program left running, and watch this one's (see reaper.ts). */
+	reap?: boolean;
 	/** Called once the program has stopped, with its exit code. */
 	onExit?: (code: number) => void;
 };
@@ -92,6 +95,12 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			return finish(EXIT.alreadyOwned);
 		}
 		throw error;
+	}
+
+	if (options.reap) {
+		const killed = reapLeftovers(options.storeDir);
+		if (killed > 0) log(`stopped ${killed} command group(s) left by an earlier program`);
+		startReaper(options.storeDir);
 	}
 
 	let harness: Harness | undefined;

@@ -49,6 +49,7 @@ const code = await runProgram({
 		settings: harnessSettings(settings),
 		env: envs.env,
 	},
+	reap: true,
 	input: process.stdin,
 	output: process.stdout,
 });
