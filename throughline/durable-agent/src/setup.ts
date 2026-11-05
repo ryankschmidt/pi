@@ -8,6 +8,7 @@ import {
 	createRegistry,
 	defineExtension,
 	type EnvTarget,
+	type Extension,
 	type HarnessSettings,
 	type ModelRef,
 	type PromptInput,
@@ -124,10 +125,16 @@ export function createPiPrompt(settings: SettingsManager, fallbackCwd: string) {
  * The extensions every start installs, in the same order. Pi Durable resolves stored extension names against this
  * registry, so a restart must install exactly these again ("After a restart, install the same extensions again").
  */
-export function createAgentRegistry(settings: SettingsManager, cwd: string): Registry {
+export function createAgentRegistry(
+	settings: SettingsManager,
+	cwd: string,
+	extra: { first?: readonly Extension[]; after?: readonly Extension[] } = {},
+): Registry {
 	const registry = createRegistry();
+	for (const extension of extra.first ?? []) registry.install(extension);
 	registry.install(CodingTools);
 	registry.install(createPiPrompt(settings, cwd));
+	for (const extension of extra.after ?? []) registry.install(extension);
 	return registry;
 }
 

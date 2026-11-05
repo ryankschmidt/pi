@@ -35,6 +35,7 @@ import {
 	PROTOCOL_VERSION,
 	type ProgramMessage,
 } from "./protocol.ts";
+import type { ApprovalAnswer, Approvals, RuntimeMode } from "./throughline-extensions.ts";
 import { attachTranscript, type TranscriptWriter } from "./transcript.ts";
 
 export const DURABLE_VERSION: string = (() => {
@@ -52,6 +53,15 @@ export const DURABLE_VERSION: string = (() => {
 
 /** Which conversation the agent's thread shows now: the root, or the newest fork after a rewind. */
 type StoredBinding = { agentId: string | null; conversationId: number | null };
+/** Tools the user accepted for the session in ThroughLine, so a restart keeps them. */
+const SessionApprovals = defineDoc<{ tools: string[] }>({
+	kind: "throughline.session-approvals",
+	version: 1,
+	scope: "session",
+	checkpointWhen: () => true,
+	initial: () => ({ tools: [] }),
+});
+
 const Binding = defineDoc<StoredBinding>({
 	kind: "throughline.agent-binding",
 	version: 1,
@@ -71,6 +81,8 @@ export type ProgramOptions = {
 	output: Writable;
 	/** Diagnostics; never the client's channel. */
 	log?: (line: string) => void;
+	/** ThroughLine approvals: the beforeTool hook asks through this object; the program carries its questions. */
+	approvals?: Approvals;
 	/** Kill commands an earlier killed program left running, and watch this one's (see reaper.ts). */
 	reap?: boolean;
 	/** Called once the program has stopped, with its exit code. */
@@ -156,6 +168,11 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				stored.conversationId = id;
 			}, context);
 		}
+		const approvals = options.approvals;
+		if (approvals) {
+			const stored = await opened.snapshot(SessionApprovals, context);
+			for (const tool of stored?.tools ?? []) approvals.allowForSession(tool);
+		}
 		opened.resume();
 
 		const hello: Hello = {
@@ -169,7 +186,13 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			conversationId: Number(conversation.id),
 		};
 		send(hello);
+		approvals?.connect((question) => send({ kind: "question", question }));
 
+		// A rewind moves the thread to another conversation; its watches end and the client opens new ones.
+		async function stopWatches() {
+			for (const watch of watches.values()) await watch.stop().catch(() => undefined);
+			watches.clear();
+		}
 		let greeted = false;
 		let watchSerial = 0;
 		const handle = async (call: Call): Promise<unknown> => {
@@ -208,6 +231,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 						{ ownership: { kind: "ownerless" } },
 						context,
 					);
+					await stopWatches();
 					conversation = fork;
 					await bind(fork.id);
 					return { conversationId: fork.id };
@@ -230,7 +254,11 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				}
 				case "entries":
 					return await conversation.entries(
-						{ order: params.order === "descending" ? "descending" : "ascending" },
+						{
+							order: params.order === "descending" ? "descending" : "ascending",
+							...(typeof params.minEntryId === "number" ? { minEntryId: params.minEntryId as EntryId } : {}),
+							...(typeof params.maxEntryId === "number" ? { maxEntryId: params.maxEntryId as EntryId } : {}),
+						},
 						typeof params.limit === "number" ? params.limit : 100,
 						params.cursor as never,
 						context,
@@ -249,6 +277,61 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				}
 				case "drain":
 					return { draining: true };
+				case "answer": {
+					if (!approvals) throw new Error("APPROVALS_NOT_INSTALLED");
+					const answer = String(params.answer) as ApprovalAnswer;
+					const matched = approvals.answer(String(params.key), answer);
+					if (answer === "acceptForSession") {
+						await opened.commit(async (tx) => {
+							const stored = await tx.doc(SessionApprovals);
+							stored.tools = approvals.sessionTools();
+						}, context);
+					}
+					return { matched };
+				}
+				case "configure": {
+					if (approvals && typeof params.runtimeMode === "string") approvals.mode = params.runtimeMode as RuntimeMode;
+					const change: { model?: { provider: string; modelId: string }; thinkingLevel?: string } = {};
+					if (typeof params.model === "string") {
+						const slash = params.model.indexOf("/");
+						if (slash <= 0) throw new Error(`MODEL_NOT_PROVIDER_SLASH_MODEL: ${params.model}`);
+						change.model = { provider: params.model.slice(0, slash), modelId: params.model.slice(slash + 1) };
+					}
+					if (typeof params.thinkingLevel === "string") change.thinkingLevel = params.thinkingLevel;
+					if (Object.keys(change).length > 0) await conversation.configure(change as AgentChange, context);
+					const agent = await conversation.agent(context);
+					return { model: agent.model ?? null, thinkingLevel: agent.thinkingLevel };
+				}
+				case "forkBefore": {
+					// A rewind to just before an entry: fork at the entry before it, or start an empty conversation
+					// when it was the first. The thread then shows the new conversation; nothing is deleted.
+					const page = await conversation.entries(
+						{ order: "descending", maxEntryId: (Number(params.entryId) - 1) as EntryId },
+						1,
+						undefined,
+						context,
+					);
+					const previous = page.items[0];
+					const agent = await conversation.agent(context);
+					const next =
+						previous === undefined
+							? await opened.createConversation(
+									{
+										ownership: { kind: "ownerless" },
+										agent: {
+											...options.initialAgent,
+											...(agent.model === undefined ? {} : { model: agent.model }),
+											thinkingLevel: agent.thinkingLevel,
+										},
+									},
+									context,
+								)
+							: await conversation.fork(previous.id, { ownership: { kind: "ownerless" } }, context);
+					await stopWatches();
+					conversation = next;
+					await bind(next.id);
+					return { conversationId: next.id, at: previous?.id ?? null };
+				}
 			}
 		};
 

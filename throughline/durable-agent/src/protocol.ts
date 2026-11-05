@@ -25,6 +25,11 @@ export type Ping = { kind: "ping"; id: string };
 export type Pong = { kind: "pong"; id: string };
 /** One update of a watch the client opened: the view at attachment, then each commit's view and operations. */
 export type View = { kind: "view"; watch: string; value: unknown; ops?: unknown };
+/** A tool call waits for the client's decision; answered with the `answer` call and the same key. */
+export type Question = {
+	kind: "question";
+	question: { key: string; tool: string; title: string; message: string };
+};
 
 export type Method =
 	| "submit"
@@ -37,7 +42,10 @@ export type Method =
 	| "entries"
 	| "abortTask"
 	| "status"
-	| "drain";
+	| "drain"
+	| "answer"
+	| "configure"
+	| "forkBefore";
 
 export const METHODS: readonly Method[] = [
 	"submit",
@@ -51,10 +59,13 @@ export const METHODS: readonly Method[] = [
 	"abortTask",
 	"status",
 	"drain",
+	"answer",
+	"configure",
+	"forkBefore",
 ];
 
 export type ClientMessage = Hello | Call | Cancel | Ping;
-export type ProgramMessage = Hello | Result | ErrorMessage | Pong | View;
+export type ProgramMessage = Hello | Result | ErrorMessage | Pong | View | Question;
 
 /** Encode one message as one line. */
 export function encode(message: ClientMessage | ProgramMessage): string {

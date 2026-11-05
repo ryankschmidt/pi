@@ -11,6 +11,7 @@ import {
 	type Method,
 	PROTOCOL_VERSION,
 	type ProgramMessage,
+	type Question,
 	type View,
 } from "./protocol.ts";
 
@@ -30,6 +31,7 @@ export type AgentProgram = {
 	readonly stderr: () => string;
 	call(method: Method, params?: Record<string, unknown>): Promise<unknown>;
 	onView(listener: (view: View) => void): void;
+	onQuestion(listener: (question: Question["question"]) => void): void;
 	/** Kill outright: no cleanup, as a crash or power cut would leave it. */
 	kill(): void;
 };
@@ -44,6 +46,7 @@ export function startProgram(
 	let errors = "";
 	const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 	const listeners: ((view: View) => void)[] = [];
+	const questionListeners: ((question: Question["question"]) => void)[] = [];
 	let settleHello: { resolve: (hello: Hello) => void; reject: (error: Error) => void } | undefined;
 	const hello = new Promise<Hello>((resolve, reject) => {
 		settleHello = { resolve, reject };
@@ -89,6 +92,8 @@ export function startProgram(
 				}
 			} else if (message.kind === "view") {
 				for (const listener of listeners) listener(message);
+			} else if (message.kind === "question") {
+				for (const listener of questionListeners) listener(message.question);
 			}
 		}),
 	);
@@ -108,6 +113,9 @@ export function startProgram(
 		},
 		onView(listener) {
 			listeners.push(listener);
+		},
+		onQuestion(listener) {
+			questionListeners.push(listener);
 		},
 		kill() {
 			child.kill("SIGKILL");
