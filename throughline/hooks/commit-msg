@@ -1,0 +1,10 @@
+#!/bin/sh
+# Dan card gate (hooks/dan-card-gate in the workbench). A commit that draws on IndyDevDan's code is checked against the
+# adopt-or-adapt card: code collects the staged facts, JEV answers the card questions, code approves or blocks. A commit with
+# no Dan trigger passes without a JEV call. A missing gate refuses the commit, because a missing check must never pass quietly.
+gate=/Users/Admin/core-root/src/hooks/dan-card-gate/dan-commit-gate.mjs
+if [ ! -f "$gate" ]; then
+  echo "dan-card-gate: the commit was not made. The gate is missing at $gate, so no commit to this fork can be checked against the Dan card; reinstall dan-card-gate through Ship Warden." >&2
+  exit 1
+fi
+node "$gate" commit-msg "$1" || exit 1
