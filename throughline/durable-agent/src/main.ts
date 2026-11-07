@@ -6,17 +6,13 @@
 // ThroughLine passes the list of its tools as a JSON file (--tools) and its orchestration instructions
 // (T3_CODE_ORCHESTRATION_INSTRUCTIONS) in the environment. Tool calls go back to ThroughLine over stdin and stdout;
 // no MCP endpoint or credential is passed to the agent.
-// Pi extensions installed for stock Pi threads (<agent dir>/extensions, and <cwd>/.pi/extensions) run here too through
-// the Pi-extension bridge; one stderr line per extension says what was mapped onto Durable and what was not.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
-import { getAgentDir } from "../../../packages/coding-agent/dist/config.js";
 import { createClaudeStandardPromptExtension } from "./claude-standard-prompt.ts";
-import { bridgePiExtensions, discoverPiExtensions } from "./pi-extension-bridge.ts";
 import { runProgram } from "./program.ts";
 import {
 	configureHttp,
@@ -66,13 +62,6 @@ if (values["runtime-mode"]) approvals.mode = values["runtime-mode"] as RuntimeMo
 const toolLink = new ToolLink();
 const descriptors: ToolDescriptor[] = values.tools ? JSON.parse(readFileSync(resolve(values.tools), "utf8")) : [];
 const tools = createThroughLineToolsExtension(descriptors, toolLink);
-const bridged = await bridgePiExtensions(discoverPiExtensions(cwd, getAgentDir()), {
-	cwd,
-	agentId: values.agent,
-	transcriptPath: resolve(values.store, "transcript.jsonl"),
-	contextWindow: (provider, modelId) => models.getModel(provider, modelId)?.contextWindow,
-	log,
-});
 const registry = createAgentRegistry(settings, cwd, {
 	// Claude Code's standard prompt renders before every other section.
 	first: [createClaudeStandardPromptExtension((provider, modelId) => models.getModel(provider, modelId)?.api)],
@@ -80,9 +69,7 @@ const registry = createAgentRegistry(settings, cwd, {
 		createToolSearchExtension(),
 		tools.extension,
 		createOrchestrationExtension(process.env),
-		// Before approvals, so a call an extension blocks is never put to the user.
-		...bridged.extensions,
-		createApprovalsExtension(approvals, new Set([...tools.readOnly, ...bridged.readOnly])),
+		createApprovalsExtension(approvals, tools.readOnly),
 	],
 });
 const code = await runProgram({
@@ -96,7 +83,6 @@ const code = await runProgram({
 	harness: { models, registry, settings: harnessSettings(settings), env: envs.env },
 	approvals,
 	tools: toolLink,
-	expandInput: bridged.expandInput,
 	...(values["carry-from"] ? { carryFrom: resolve(values["carry-from"]) } : {}),
 	reap: true,
 	input: process.stdin,
