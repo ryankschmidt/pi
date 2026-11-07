@@ -24,6 +24,7 @@ import {
 	readdirSync,
 	readFileSync,
 	readlinkSync,
+	realpathSync,
 	renameSync,
 	rmSync,
 	statSync,
@@ -291,4 +292,5 @@ function main(): void {
 	}
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+// Compared through realpath: the adapter runs this file through the <runtime>/current link, while import.meta.url is resolved.
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) main();

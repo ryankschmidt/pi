@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { check, install, readPin, rollback } from "../install/runtime.ts";
 
 /** A tiny stand-in for the Pi fork: one workspace package with dist, a node_modules link to it, the agent entry. */
@@ -55,4 +56,13 @@ test("install copies the program read-only and pins it; check sees an edit; roll
 	assert.equal(second.previous, first.id);
 	assert.equal(rollback(runtime).id, first.id);
 	assert.equal(readPin(runtime)?.id, first.id);
+});
+
+test("check run through a link (as the Health Hub adapter runs it) reports a missing install and exits 1", () => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-guard-link-"));
+	symlinkSync(fileURLToPath(new URL("../install/runtime.ts", import.meta.url)), join(dir, "runtime.ts"));
+	const run = spawnSync(process.execPath, [join(dir, "runtime.ts"), "check", "--runtime", join(dir, "empty")], { encoding: "utf8" });
+	assert.equal(run.status, 1, run.stderr);
+	assert.match(run.stdout, /REGRESSED/);
+	assert.match(run.stdout, /no installed agent program/);
 });
