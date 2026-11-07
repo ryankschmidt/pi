@@ -86,6 +86,8 @@ export type ProgramOptions = {
 	approvals?: Approvals;
 	/** ThroughLine's tools: their calls leave on this link as `tool` messages and return as `toolResult`. */
 	tools?: ToolLink;
+	/** Expand extension-provided prompt templates before the input enters Durable's transcript. */
+	expandInput?: (input: unknown) => unknown;
 	/** A stock Pi session file to carry into the bound conversation before resuming (see carry.ts). */
 	carryFrom?: string;
 	/** Kill commands an earlier killed program left running, and watch this one's (see reaper.ts). */
@@ -214,7 +216,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 							? { type: "continue", requestId: params.requestId }
 							: {
 									type: "input",
-									content: params.content,
+									content: options.expandInput ? options.expandInput(params.content) : params.content,
 									requestId: params.requestId,
 									...(params.whenBusy === undefined ? {} : { whenBusy: params.whenBusy }),
 									...(params.whenIdle === undefined ? {} : { whenIdle: params.whenIdle }),

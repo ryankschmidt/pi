@@ -14,7 +14,13 @@ const faux = fauxProvider({ provider: "faux-test", api: "faux-test" });
 const models = createModels();
 models.setProvider(faux.provider);
 const model = faux.getModel();
-faux.setResponses([
+faux.setResponses(process.env.BRIDGE_TEST_LEAD === "1" ? [
+	fauxAssistantMessage("first answer"),
+	fauxAssistantMessage("continued answer"),
+] : process.env.BRIDGE_TEST_RESUME === "1" ? [
+	fauxAssistantMessage(fauxToolCall("bash", { command: "echo resumed >> a.txt" }), { stopReason: "toolUse" }),
+	fauxAssistantMessage("resumed"),
+] : [
 	fauxAssistantMessage(fauxToolCall("inspect_image", { image_path: "dot.png" }), { stopReason: "toolUse" }),
 	fauxAssistantMessage("seen"),
 	fauxAssistantMessage(fauxToolCall("bash", { command: "echo one >> a.txt" }), { stopReason: "toolUse" }),
@@ -23,7 +29,7 @@ faux.setResponses([
 	fauxAssistantMessage("held"),
 ]);
 const log = (line: string) => process.stderr.write(`${line}\n`);
-const bridge = await bridgePiExtensions(paths, { cwd, contextWindow: () => 200_000, log });
+const bridge = await bridgePiExtensions(paths, { cwd, contextWindow: () => 200_000, agentId: "test-agent", transcriptPath: `${storeDir}/transcript.jsonl`, log });
 const registry = createRegistry();
 registry.install(CodingTools);
 for (const extension of bridge.extensions) registry.install(extension);
@@ -31,6 +37,7 @@ const code = await runProgram({
 	storeDir,
 	agentId: "test-agent",
 	initialAgent: { cwd, model: { provider: model.provider, modelId: model.id } },
+	expandInput: bridge.expandInput,
 	harness: {
 		models,
 		registry,

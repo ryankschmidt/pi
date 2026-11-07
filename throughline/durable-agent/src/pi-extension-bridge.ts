@@ -17,14 +17,17 @@
 // Everything else an extension registers, and every context member or action it uses that has no Durable meaning, is
 // written to the extension's report as unmapped and logged at start or on first use. Nothing is dropped silently and
 // nothing is faked: `ctx.ui` is Pi's own no-UI behaviour (calls are recorded, nothing is drawn), and there is no Pi
-// session file on a Durable thread, so `ctx.sessionManager` answers undefined and says so.
+// session file on a Durable thread; the lead-boundary hook gets the actual Durable agent identifier and transcript
+// projection rather than a made-up stock-Pi session file.
 //
 // Replay: Durable hooks run inside checkpointed tasks and may run again after a crash. The two verdict hooks that can
 // carry a JEV or model call (tool_call and session_before_compact) store their verdict as a task memo per extension,
 // so a restarted task reuses the verdict and does not run the extension's check again.
 
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { getAgentDir } from "../../../packages/coding-agent/dist/config.js";
+import { expandPromptTemplate, loadPromptTemplates } from "../../../packages/coding-agent/dist/core/prompt-templates.js";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import {
 	CompactionTask,
@@ -85,6 +88,8 @@ export type PiExtensionBridge = {
 	runCommand(name: string, args: string, cwd: string): Promise<boolean>;
 	/** Tool names the bridged extensions declared read-only through `READ_ONLY_BRIDGED_TOOLS`. */
 	readOnly: Set<string>;
+	/** Expand discovered Pi prompt templates in a user submission, preserving non-text inputs. */
+	expandInput(input: unknown): unknown;
 };
 
 export type BridgeOptions = {
@@ -94,6 +99,9 @@ export type BridgeOptions = {
 	contextWindow?: (provider: string, modelId: string) => number | undefined;
 	/** Where start-time and first-use lines go (the program's stderr). */
 	log?: (line: string) => void;
+	/** The actual Durable agent identifier and projected transcript, not a fabricated stock-Pi session. */
+	agentId?: string;
+	transcriptPath?: string;
 };
 
 /** Prefix of every bridged Durable extension name. */
@@ -109,9 +117,8 @@ export function discoverPiExtensions(cwd: string, agentDir: string): string[] {
 	for (const dir of [join(cwd, ".pi", "extensions"), join(agentDir, "extensions")]) {
 		if (!existsSync(dir)) continue;
 		for (const name of readdirSync(dir).sort()) {
-			// These two installed files are deliberately not bridged: the standard prompt is
-			// already ported, and rtk must not rewrite Durable agents' shell commands.
-			if (dir === join(agentDir, "extensions") && (name === "rtk.ts" || name === "claude-standard-prompt.js")) continue;
+			// The installed rtk is intentionally excluded from Durable agents.
+			if (dir === join(agentDir, "extensions") && name === "rtk.ts") continue;
 			const full = join(dir, name);
 			if (statSync(full).isDirectory()) {
 				const index = ["index.ts", "index.js"].map((file) => join(full, file)).find((file) => existsSync(file));
@@ -132,6 +139,7 @@ export async function bridgePiExtensions(paths: readonly string[], options: Brid
 	const commands: BridgedCommand[] = [];
 	const readOnly = new Set<string>();
 	const handlersByCommand = new Map<string, { report: ExtensionReport; handler: CommandHandler }>();
+	const promptPaths: string[] = [];
 	for (const path of paths) {
 		const report: ExtensionReport = { name: extensionName(path), path, status: "loaded", mapped: [], unmapped: [] };
 		reports.push(report);
@@ -146,18 +154,33 @@ export async function bridgePiExtensions(paths: readonly string[], options: Brid
 			continue;
 		}
 		extensions.push(bridgeOne(pi, report, state));
+		for (const handler of (pi.handlers.get("resources_discover") ?? []) as Handler[]) {
+			const result = await state.guard(report, "resources_discover", () => handler(
+				{ type: "resources_discover", cwd: options.cwd, reason: "startup" },
+				state.ctx(report, undefined, options.cwd, undefined),
+			)) as { promptPaths?: string[]; skillPaths?: string[]; themePaths?: string[] } | undefined;
+			if (result?.promptPaths) promptPaths.push(...result.promptPaths);
+			if (result?.skillPaths?.length || result?.themePaths?.length) state.unmapped(report, "event", "resources_discover skillPaths/themePaths", "only prompt paths are currently carried");
+		}
 		for (const tool of pi.tools.keys()) if (READ_ONLY_BRIDGED_TOOLS.has(tool)) readOnly.add(tool);
 		for (const [name, command] of pi.commands) {
 			commands.push({ extension: report.name, name, ...(command.description ? { description: command.description } : {}) });
 			handlersByCommand.set(name, { report, handler: command.handler as CommandHandler });
 		}
 	}
+	const templates = loadPromptTemplates({ cwd: options.cwd, agentDir: getAgentDir(), promptPaths, includeDefaults: false });
+	for (const diagnostic of templates.diagnostics) options.log?.(`Pi prompt template: ${diagnostic.message}`);
 	for (const report of reports) options.log?.(describeReport(report));
 	return {
 		extensions,
 		reports,
 		commands,
 		readOnly,
+		expandInput: (input) => {
+			if (typeof input === "string") return expandPromptTemplate(input, templates.templates);
+			if (!Array.isArray(input) || input[0]?.type !== "text" || typeof input[0]?.text !== "string") return input;
+			return [{ ...input[0], text: expandPromptTemplate(input[0].text, templates.templates) }, ...input.slice(1)];
+		},
 		runCommand: async (name, args, cwd) => {
 			const entry = handlersByCommand.get(name);
 			if (entry === undefined) return false;
@@ -189,6 +212,7 @@ function extensionName(path: string): string {
 
 /** How each Pi event is carried; events not listed here are reported unmapped with `UNMAPPED_EVENTS` or a default. */
 const EVENT_MAP: Record<string, Omit<MappedPart, "kind" | "name">> = {
+	resources_discover: { onto: "Pi prompt templates at submit", fidelity: "partial", note: "prompt paths only; no dynamic reload" },
 	tool_call: { onto: "ToolTask.beforeTool", fidelity: "full", note: "block -> { block }; in-place input edits -> { arguments }; verdict memoized per call" },
 	tool_result: { onto: "ToolTask.afterTool", fidelity: "full", note: "content, details and isError replace the result" },
 	context: { onto: "GenerationTask.beforeRequest", fidelity: "full" },
@@ -201,7 +225,7 @@ const EVENT_MAP: Record<string, Omit<MappedPart, "kind" | "name">> = {
 	turn_end: {
 		onto: "GenerationTask.afterTools+onYield",
 		fidelity: "partial",
-		note: "after every tool round and on the final answer; turn index counts per process",
+		note: "custom messages continue at yield; custom markers are carried in history; turn index counts per process",
 	},
 	agent_end: {
 		onto: "GenerationTask.afterRun",
@@ -224,7 +248,6 @@ const EVENT_MAP: Record<string, Omit<MappedPart, "kind" | "name">> = {
 const UNMAPPED_EVENTS: Record<string, string> = {
 	session_compact: "Durable has no after-compaction hook",
 	before_agent_start: "replaces the whole system prompt; Durable builds the prompt from sections (not mapped yet)",
-	resources_discover: "Durable's prompt loads skills and templates in setup.ts; extension-provided paths are not fed in yet",
 	session_shutdown: "a Durable agent has no per-session shutdown; the program drains instead",
 };
 
@@ -317,6 +340,14 @@ function toolTaskHooks(handlers: (event: string) => Handler[], report: Extension
 			: {
 					beforeTool: async (call: ToolHookCall, api: HookApi, context: Context) => {
 						await state.start(report, handlers, api, context);
+						if (basename(report.path) === "boundary-gate.js" && !["read", "grep", "find", "ls"].includes(call.name)) {
+							const hold = await boundaryHoldFromHistory(api, context, state.cwd);
+							if (hold) return { block: "boundary-gate hold: post-boundary onboarding is reading, never writing. Read the handoff files and provide the RE-ENTRY and INTENT ONBOARDED lines before changing anything. This preserves the pre-boundary context; skipping it risks edits made without the decisions and unfinished work in the handoff." };
+							// The installed gate's in-memory hold belongs to the last conversation that
+							// compacted, not necessarily this one. The committed history above is the
+							// authority for the held-tool decision, including after a fork or restart.
+							return undefined;
+						}
 						const memo = `${report.name}:tool_call`;
 						const prior = await api.memo<ToolVerdict>(memo, context);
 						const verdict = prior ?? (await api.memo(memo, await runToolCall(calls, call, report, state, api, context), context));
@@ -333,6 +364,46 @@ function toolTaskHooks(handlers: (event: string) => Handler[], report: Extension
 					},
 				}),
 	};
+}
+
+/** Rebuild the boundary hold from committed, fork-aware Durable history, not process memory. */
+export async function boundaryHoldFromHistory(api: HookApi, context: Context, cwd = process.cwd()): Promise<boolean> {
+	const entries: Awaited<ReturnType<HookApi["entries"]>>["items"][number][] = [];
+	let cursor: Parameters<HookApi["entries"]>[2];
+	do {
+		const page = await api.entries({ order: "ascending" }, 500, cursor, context);
+		entries.push(...page.items);
+		cursor = page.next;
+	} while (cursor !== undefined);
+	const textOf = (message: { content?: unknown }): string => typeof message.content === "string" ? message.content :
+		Array.isArray(message.content) ? message.content.filter((part: { type?: string }) => part.type === "text").map((part: { text?: string }) => part.text ?? "").join("\n") : "";
+	let active = false;
+	let listed: string[] = [];
+	let target: string | undefined;
+	const reads = new Set<string>();
+	const pendingReads = new Map<string, string>();
+	for (const entry of entries) {
+		if (entry.kind === "pi.reset") { active = false; continue; }
+		for (const message of entry.model ?? []) {
+			const text = textOf(message);
+			if (entry.kind === "pi.compaction" && text.includes("CONTEXT BOUNDARY — this summary is a handoff")) {
+				active = true; reads.clear(); pendingReads.clear();
+				const kickoff = text.split("----- HANDOFF -----")[1] ?? "";
+				listed = (kickoff.match(/\/(?:Users|home|srv|opt|private|tmp)\/[^\s`'"<>|]+/g) ?? []).map((p) => p.replace(/….*$/, "").replace(/#.*$/, "").replace(/[.,;:)\]]+$/, ""));
+				target = text.match(/full target id ([^\s.]+)/)?.[1];
+				continue;
+			}
+			if (!active) continue;
+			if (message.role === "assistant") {
+				for (const part of message.content) if (part.type === "toolCall" && part.name === "read" && typeof part.arguments.path === "string") pendingReads.set(part.id, resolve(cwd, part.arguments.path));
+				if (text.includes("RE-ENTRY ") && text.includes("INTENT ONBOARDED:") && (!target || text.includes(target)) && (listed.length === 0 || listed.some((path) => reads.has(path)))) active = false;
+			} else if (message.role === "toolResult" && !message.isError) {
+				const path = pendingReads.get(message.toolCallId);
+				if (path) reads.add(path);
+			}
+		}
+	}
+	return active;
 }
 
 async function runToolCall(
@@ -397,18 +468,31 @@ function generationTaskHooks(handlers: (event: string) => Handler[], report: Ext
 	const fireTurnEnd = async (message: unknown, toolResults: unknown[], api: HookApi, ctx: Context) => {
 		// A Durable turn that reaches these hooks completed; Pi's boundary fields start empty, as on a stock turn.
 		const event = { type: "turn_end", turnIndex: turns.index++, message, toolResults, outcome: "completed", entries: [], continue: false };
+		const branch: { type: string; customType: string }[] = [];
+		let cursor: Parameters<HookApi["entries"]>[2];
+		do {
+			const page = await api.entries({ order: "ascending" }, 500, cursor, ctx);
+			for (const entry of page.items) for (const m of entry.model ?? []) {
+				if (m.role !== "user") continue;
+				const text = typeof m.content === "string" ? m.content : m.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+				for (const match of text.matchAll(/^\[pi-extension-entry:([^\]\n]+)\]$/gm)) branch.push({ type: "custom", customType: match[1]! });
+			}
+			cursor = page.next;
+		} while (cursor !== undefined);
 		for (const handler of turnEnd) {
-			const result = await state.guard(report, "turn_end", () => handler(event, state.ctx(report, api, undefined, ctx)));
-			if (result !== undefined) {
-				state.unmapped(
-					report,
-					"event",
-					"turn_end result",
-					"appending boundary entries and continuing from turn_end has no Durable hook; the result was not applied",
-					result,
-				);
+			const result = await state.guard(report, "turn_end", () => handler(event, state.ctx(report, api, undefined, ctx, branch))) as
+				{ continue?: boolean; entries?: { type?: string; customType?: string; content?: unknown }[] } | undefined;
+			if (!result?.continue || !result.entries) continue;
+			const markers = result.entries.filter((entry) => entry.type === "custom" && typeof entry.customType === "string").map((entry) => `[pi-extension-entry:${entry.customType}]`);
+			const messages = result.entries.filter((entry) => entry.type === "custom_message" && typeof entry.content === "string").map((entry) => entry.content as string);
+			if (messages.length > 0) {
+				const identityNote = basename(report.path) === "pi-lead-boundary.js"
+					? "This is a Pi Durable agent. The identifier below is its Durable agent identifier, and the transcript is a Durable projection, not a stock Pi session file. The handoff command may not recognize that format; report a refusal honestly rather than substituting another session."
+					: undefined;
+				return [...markers, ...(identityNote ? [identityNote] : []), ...messages].join("\n\n");
 			}
 		}
+		return undefined;
 	};
 	return {
 		beforeRequest: async (request: { readonly messages: readonly unknown[] }, api: HookApi, ctx: Context) => {
@@ -461,8 +545,8 @@ function generationTaskHooks(handlers: (event: string) => Handler[], report: Ext
 						await fireTurnEnd(message, toolResults, api, ctx);
 					},
 					onYield: async (answer: unknown, api: HookApi, ctx: Context) => {
-						await fireTurnEnd(answer, [], api, ctx);
-						return undefined;
+						const continuation = await fireTurnEnd(answer, [], api, ctx);
+						return continuation === undefined ? undefined : { continue: continuation };
 					},
 				}),
 		...(agentEnd.length === 0
@@ -638,10 +722,15 @@ class BridgeState {
 	 * Pi's ExtensionContext for one call. Members with a Durable meaning answer; any other member is recorded unmapped
 	 * and answers undefined.
 	 */
-	ctx(report: ExtensionReport, api: HookApi | undefined, cwd: string | undefined, context: Context | undefined): unknown {
+	ctx(report: ExtensionReport, api: HookApi | undefined, cwd: string | undefined, context: Context | undefined, branch?: unknown[]): unknown {
 		const conversationId = api === undefined ? undefined : String(api.conversationId);
 		const ui = recorder(this, report, "ctx.ui", "Pi's no-UI mode: nothing is drawn on a Durable thread");
-		const sessionManager = recorder(this, report, "ctx.sessionManager", "a Durable thread has no Pi session file");
+		const leadContext = basename(report.path) === "pi-lead-boundary.js" && branch !== undefined;
+		const sessionManager = {
+			getSessionId: () => leadContext ? this.#options.agentId : undefined,
+			getSessionFile: () => leadContext ? this.#options.transcriptPath : undefined,
+			getBranch: () => branch ?? [],
+		};
 		const base: Record<string, unknown> = {
 			cwd: cwd ?? this.cwd,
 			hasUI: false,

@@ -68,6 +68,8 @@ const descriptors: ToolDescriptor[] = values.tools ? JSON.parse(readFileSync(res
 const tools = createThroughLineToolsExtension(descriptors, toolLink);
 const bridged = await bridgePiExtensions(discoverPiExtensions(cwd, getAgentDir()), {
 	cwd,
+	agentId: values.agent,
+	transcriptPath: resolve(values.store, "transcript.jsonl"),
 	contextWindow: (provider, modelId) => models.getModel(provider, modelId)?.contextWindow,
 	log,
 });
@@ -94,6 +96,7 @@ const code = await runProgram({
 	harness: { models, registry, settings: harnessSettings(settings), env: envs.env },
 	approvals,
 	tools: toolLink,
+	expandInput: bridged.expandInput,
 	...(values["carry-from"] ? { carryFrom: resolve(values["carry-from"]) } : {}),
 	reap: true,
 	input: process.stdin,
