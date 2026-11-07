@@ -5,14 +5,14 @@
     "sha": "f9a26365568127461c47a07a37dcb42c140a3ac5"
   },
   "fork": {
-    "sha": "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad"
+    "sha": "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b"
   },
   "merge_base": "f9a26365568127461c47a07a37dcb42c140a3ac5",
   "counts": {
     "upstream_edit": 0,
     "upstream_removed": 0,
     "fork_added": 0,
-    "fork_namespace": 58
+    "fork_namespace": 59
   },
   "admitted": {
     "upstream_edit_count": 0,
@@ -79,7 +79,7 @@
     {
       "path": "throughline-seam.json",
       "class": "fork-namespace",
-      "reason": "822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\nd82a2db77979543cfdf64c2affa4287dbf920821 seam: ledger and exact-path coverage for the Pi Durable agent program\n0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths\n34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)\nffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage\na7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces\n8360421492bba5ca62c3edd7ed5c148b1095e4bd seam: declare exact product coverage and regenerate twelve-path ledger\n37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
+      "reason": "ddbe159d22b677c8520c80c2fb7c1590e0a0146b seam: cover the build 2 agent program files\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\nd82a2db77979543cfdf64c2affa4287dbf920821 seam: ledger and exact-path coverage for the Pi Durable agent program\n0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths\n34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)\nffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage\na7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces\n8360421492bba5ca62c3edd7ed5c148b1095e4bd seam: declare exact product coverage and regenerate twelve-path ledger\n37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -89,6 +89,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "ddbe159d22b677c8520c80c2fb7c1590e0a0146b seam: cover the build 2 agent program files",
         "822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes",
         "d82a2db77979543cfdf64c2affa4287dbf920821 seam: ledger and exact-path coverage for the Pi Durable agent program",
         "0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths",
@@ -259,7 +260,7 @@
     {
       "path": "throughline/durable-agent/README.md",
       "class": "fork-namespace",
-      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -269,6 +270,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token",
         "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
       ],
       "legacy_rules": []
@@ -293,7 +295,7 @@
     {
       "path": "throughline/durable-agent/src/client.ts",
       "class": "fork-namespace",
-      "reason": "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -303,6 +305,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token",
         "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program",
         "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
       ],
@@ -328,7 +331,7 @@
     {
       "path": "throughline/durable-agent/src/main.ts",
       "class": "fork-namespace",
-      "reason": "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -338,6 +341,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token",
         "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program",
         "822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes",
         "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
@@ -347,7 +351,7 @@
     {
       "path": "throughline/durable-agent/src/program.ts",
       "class": "fork-namespace",
-      "reason": "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\n9cd1aadb930ed7b763d2343c09ce864ef7d7fe0d namespace: compact can wait for its task; configure takes instructions\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -357,6 +361,8 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token",
+        "9cd1aadb930ed7b763d2343c09ce864ef7d7fe0d namespace: compact can wait for its task; configure takes instructions",
         "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program",
         "822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes",
         "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
@@ -366,7 +372,7 @@
     {
       "path": "throughline/durable-agent/src/protocol.ts",
       "class": "fork-namespace",
-      "reason": "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -376,6 +382,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token",
         "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program",
         "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
       ],
@@ -419,7 +426,7 @@
     {
       "path": "throughline/durable-agent/src/throughline-extensions.ts",
       "class": "fork-namespace",
-      "reason": "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program",
+      "reason": "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -429,6 +436,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token",
         "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program"
       ],
       "legacy_rules": []
@@ -485,9 +493,9 @@
       "legacy_rules": []
     },
     {
-      "path": "throughline/durable-agent/test/program.test.ts",
+      "path": "throughline/durable-agent/test/fixtures/faux-tools-program.ts",
       "class": "fork-namespace",
-      "reason": "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -497,6 +505,24 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/test/program.test.ts",
+      "class": "fork-namespace",
+      "reason": "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token",
         "468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)"
       ],
       "legacy_rules": []
@@ -1225,7 +1251,7 @@
       },
       {
         "name": "durable-agent-program",
-        "rule": "Retain the fork-owned Pi Durable agent program (builds 1 and 2 of map v3, Nov 4, 2026), with ThroughLine approvals, MCP tools, orchestration section, Claude standard prompt section and the command watcher,: one process per agent store serving Pi Durable calls as JSON lines. Behavior proof lives in its proof folder and receipt; acceptance remains separate from this exact-path coverage declaration.",
+        "rule": "Retain the fork-owned Pi Durable agent program (builds 1 and 2 of map v3, Nov 4, 2026), with ThroughLine approvals, ThroughLine tools carried over the program's own link (no MCP client or token in the agent, Nov 6, 2026), orchestration section, Claude standard prompt section and the command watcher,: one process per agent store serving Pi Durable calls as JSON lines. Behavior proof lives in its proof folder and receipt; acceptance remains separate from this exact-path coverage declaration.",
         "paths": [
           "throughline/durable-agent/README.md",
           "throughline/durable-agent/package.json",
@@ -1249,6 +1275,7 @@
           "throughline/durable-agent/src/transcript.ts",
           "throughline/durable-agent/test/fixtures/detached-parent.ts",
           "throughline/durable-agent/test/fixtures/faux-program.ts",
+          "throughline/durable-agent/test/fixtures/faux-tools-program.ts",
           "throughline/durable-agent/test/program.test.ts",
           "throughline/durable-agent/test/reaper.test.ts",
           "throughline/durable-agent/tsconfig.json"
