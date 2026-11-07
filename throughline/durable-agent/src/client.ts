@@ -12,6 +12,8 @@ import {
 	PROTOCOL_VERSION,
 	type ProgramMessage,
 	type Question,
+	type ToolCall,
+	type ToolResult,
 	type View,
 } from "./protocol.ts";
 
@@ -32,6 +34,9 @@ export type AgentProgram = {
 	call(method: Method, params?: Record<string, unknown>): Promise<unknown>;
 	onView(listener: (view: View) => void): void;
 	onQuestion(listener: (question: Question["question"]) => void): void;
+	/** A ThroughLine tool call the program sent; answer it with `answerTool`. */
+	onToolCall(listener: (call: ToolCall) => void): void;
+	answerTool(id: string, result: Omit<ToolResult, "kind" | "id">): void;
 	/** Kill outright: no cleanup, as a crash or power cut would leave it. */
 	kill(): void;
 };
@@ -47,6 +52,7 @@ export function startProgram(
 	const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 	const listeners: ((view: View) => void)[] = [];
 	const questionListeners: ((question: Question["question"]) => void)[] = [];
+	const toolListeners: ((call: ToolCall) => void)[] = [];
 	let settleHello: { resolve: (hello: Hello) => void; reject: (error: Error) => void } | undefined;
 	const hello = new Promise<Hello>((resolve, reject) => {
 		settleHello = { resolve, reject };
@@ -94,6 +100,8 @@ export function startProgram(
 				for (const listener of listeners) listener(message);
 			} else if (message.kind === "question") {
 				for (const listener of questionListeners) listener(message.question);
+			} else if (message.kind === "tool") {
+				for (const listener of toolListeners) listener(message);
 			}
 		}),
 	);
@@ -116,6 +124,12 @@ export function startProgram(
 		},
 		onQuestion(listener) {
 			questionListeners.push(listener);
+		},
+		onToolCall(listener) {
+			toolListeners.push(listener);
+		},
+		answerTool(id, result) {
+			child.stdin?.write(encode({ kind: "toolResult", id, ...result }));
 		},
 		kill() {
 			child.kill("SIGKILL");

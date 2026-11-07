@@ -2,7 +2,7 @@
 // Kinds borrow Chord v2's meanings (hello, call, result, error, cancel, ping); method names are Pi Durable's.
 // This file and connection.ts are the only files that know the wire.
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const ENGINE = "pi-durable";
 
 export type Hello = {
@@ -29,6 +29,16 @@ export type View = { kind: "view"; watch: string; value: unknown; ops?: unknown 
 export type Question = {
 	kind: "question";
 	question: { key: string; tool: string; title: string; message: string };
+};
+
+/** A ThroughLine tool call; ThroughLine makes it for the thread on this link and answers with `toolResult`. */
+export type ToolCall = { kind: "tool"; id: string; name: string; arguments: unknown };
+/** ThroughLine's answer to a `tool` message: model-ready text and image content. */
+export type ToolResult = {
+	kind: "toolResult";
+	id: string;
+	content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[];
+	isError?: boolean;
 };
 
 export type Method =
@@ -64,8 +74,8 @@ export const METHODS: readonly Method[] = [
 	"forkBefore",
 ];
 
-export type ClientMessage = Hello | Call | Cancel | Ping;
-export type ProgramMessage = Hello | Result | ErrorMessage | Pong | View | Question;
+export type ClientMessage = Hello | Call | Cancel | Ping | ToolResult;
+export type ProgramMessage = Hello | Result | ErrorMessage | Pong | View | Question | ToolCall;
 
 /** Encode one message as one line. */
 export function encode(message: ClientMessage | ProgramMessage): string {
@@ -90,5 +100,5 @@ export function lineSplitter(onLine: (line: string) => void): (chunk: string) =>
 export function isClientMessage(value: unknown): value is ClientMessage {
 	if (typeof value !== "object" || value === null || !("kind" in value)) return false;
 	const kind = (value as { kind: unknown }).kind;
-	return kind === "hello" || kind === "call" || kind === "cancel" || kind === "ping";
+	return kind === "hello" || kind === "call" || kind === "cancel" || kind === "ping" || kind === "toolResult";
 }

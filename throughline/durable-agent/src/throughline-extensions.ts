@@ -1,22 +1,21 @@
 // ThroughLine's parts of every Pi Durable agent, in Durable form (map v3 section 4, rows 4-4 to 4-6):
 //   - approvals: a beforeTool hook that asks the connected client a keyed question and waits for its answer;
-//   - ThroughLine's MCP tools, one Durable tool per MCP tool, through pi-mcp, deferred behind tool_search except
-//     the three T3 keeps direct;
+//   - ThroughLine's tools, one Durable tool per tool ThroughLine lists, deferred behind tool_search except the three
+//     T3 keeps direct; each call travels over the program's own link and ThroughLine's server makes it;
 //   - ThroughLine's orchestration instructions as one section.
 // They replace T3 Code's injected coding-agent extension (packages/provider-pi/src/server/mcpExtensionSource.ts in
 // the ThroughLine fork), keeping its rules: full access asks nothing, read-only tools pass, auto-accept-edits passes
 // edit and write, and a declined call is blocked with "<tool> was declined in ThroughLine."
 
-
-import { McpClient, StreamableHttpTransport, toLlmContent } from "@earendil-works/pi-mcp";
 import { defineExtension, defineTool, type Extension, hook, section, ToolTask } from "@earendil-works/pi-durable";
 
 export type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "tool_search"]);
 const FILE_CHANGE_TOOLS = new Set(["edit", "write"]);
-const MCP_PREFIX = "mcp__t3-code__";
-const DIRECT_MCP_TOOLS = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
+/** Names the agent sees for ThroughLine's tools; ThroughLine maps them to the stock screen's names. */
+export const TOOL_PREFIX = "throughline__";
+const DIRECT_TOOLS = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
 
 export type ApprovalQuestion = {
 	/** The tool call's id: stable across restarts, so a re-asked question reattaches to the same card. */
@@ -111,7 +110,7 @@ function summary(args: unknown): string {
 	return text.length > 2000 ? `${text.slice(0, 2000)}…` : text;
 }
 
-/** The approvals hook. Read-only MCP tools come from the MCP extension's catalog. */
+/** The approvals hook. ThroughLine's read-only tools come from the tool list ThroughLine handed over. */
 export function createApprovalsExtension(approvals: Approvals, readOnlyMcp: ReadonlySet<string>): Extension {
 	return defineExtension({
 		name: "throughline-approvals",
@@ -134,57 +133,80 @@ export function createApprovalsExtension(approvals: Approvals, readOnlyMcp: Read
 }
 
 /**
- * ThroughLine's MCP tools, listed once at start from the thread's own MCP endpoint and credential (the same
- * T3_MCP_URL and T3_MCP_BEARER_TOKEN T3 Code passes its Pi bridge). A start without them, or with the server
- * unreachable, installs an extension with no tools under the same name, so stored names still resolve.
+ * The program's side of ThroughLine's tools. A tool call leaves as a `tool` message on the program's own link
+ * (stdin and stdout on the Mac) and resolves when ThroughLine answers with a `toolResult` of the same id; ThroughLine's
+ * server makes the call for the thread that owns the link, so no endpoint or credential reaches the agent. Calls made
+ * before a client connects (a resumed tool task) are sent on connect.
  */
-export async function createMcpExtension(
-	env: NodeJS.ProcessEnv,
-	log: (line: string) => void,
-): Promise<{ extension: Extension; readOnly: Set<string>; close: () => Promise<void> }> {
-	const readOnly = new Set<string>();
-	const url = env.T3_MCP_URL;
-	const token = env.T3_MCP_BEARER_TOKEN;
-	const empty = { extension: defineExtension({ name: "throughline-mcp" }), readOnly, close: async () => {} };
-	if (!url || !token) return empty;
-	const client = new McpClient({ name: "throughline-pi-durable", version: "1.0.0" });
-	try {
-		await client.connect(
-			new StreamableHttpTransport({
-				url,
-				headers: { authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}` },
-			}),
-		);
-		const catalog = await client.listTools();
-		const tools = catalog.map((tool) => {
-			const name = `${MCP_PREFIX}${tool.name}`;
-			if (tool.annotations?.readOnlyHint === true) readOnly.add(name);
-			return defineTool({
-				name,
-				description: tool.description ?? tool.name,
-				parameters: { ...tool.inputSchema, type: "object", properties: tool.inputSchema.properties ?? {} } as never,
-				...(DIRECT_MCP_TOOLS.has(tool.name) ? {} : { deferred: true }),
-				execute: async (args: unknown) => {
-					const result = await client.callTool(tool.name, (args ?? {}) as Record<string, unknown>);
-					const content = toLlmContent(result);
-					if (result.isError === true) {
-						const text = content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
-						throw new Error(text.length > 0 ? text : `MCP tool t3-code/${tool.name} returned an error`);
-					}
-					return { output: content, details: { server: "t3-code", tool: tool.name } };
-				},
-			} as never);
-		});
-		return {
-			extension: defineExtension({ name: "throughline-mcp", tools }),
-			readOnly,
-			close: () => client.close(),
-		};
-	} catch (error) {
-		log(`ThroughLine MCP unavailable at start: ${error instanceof Error ? error.message : String(error)}`);
-		await client.close().catch(() => undefined);
-		return empty;
+export class ToolLink {
+	readonly #pending = new Map<string, { message: ToolCallRequest; settle: (result: ToolCallResult) => void }>();
+	#send: ((message: ToolCallRequest) => void) | undefined;
+	#serial = 0;
+
+	connect(send: (message: ToolCallRequest) => void): void {
+		this.#send = send;
+		for (const { message } of this.#pending.values()) send(message);
 	}
+
+	call(name: string, args: unknown): Promise<ToolCallResult> {
+		const message: ToolCallRequest = { id: `tool-${++this.#serial}`, name, arguments: args ?? {} };
+		return new Promise((settle) => {
+			this.#pending.set(message.id, { message, settle });
+			this.#send?.(message);
+		});
+	}
+
+	/** ThroughLine's answer; false when no call with that id is waiting. */
+	answer(id: string, result: ToolCallResult): boolean {
+		const entry = this.#pending.get(id);
+		if (entry === undefined) return false;
+		this.#pending.delete(id);
+		entry.settle(result);
+		return true;
+	}
+}
+
+export type ToolCallRequest = { id: string; name: string; arguments: unknown };
+export type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+export type ToolCallResult = { content: ToolContent[]; isError?: boolean };
+/** One entry of the tool list ThroughLine hands the program at start (`--tools <file>`). */
+export type ToolDescriptor = {
+	name: string;
+	description?: string;
+	inputSchema?: Record<string, unknown>;
+	readOnly?: boolean;
+};
+
+/**
+ * ThroughLine's tools as Durable tools, one per descriptor, named `throughline__<tool>` and deferred behind
+ * tool_search except the three T3 keeps direct. An empty list still installs the extension under the same name, so
+ * stored names resolve after a restart without the list.
+ */
+export function createThroughLineToolsExtension(
+	descriptors: readonly ToolDescriptor[],
+	link: ToolLink,
+): { extension: Extension; readOnly: Set<string> } {
+	const readOnly = new Set<string>();
+	const tools = descriptors.map((descriptor) => {
+		const name = `${TOOL_PREFIX}${descriptor.name}`;
+		if (descriptor.readOnly === true) readOnly.add(name);
+		const schema = descriptor.inputSchema ?? {};
+		return defineTool({
+			name,
+			description: descriptor.description ?? descriptor.name,
+			parameters: { ...schema, type: "object", properties: schema.properties ?? {} } as never,
+			...(DIRECT_TOOLS.has(descriptor.name) ? {} : { deferred: true }),
+			execute: async (args: unknown) => {
+				const result = await link.call(descriptor.name, args);
+				if (result.isError === true) {
+					const text = result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+					throw new Error(text.length > 0 ? text : `ThroughLine tool ${descriptor.name} returned an error`);
+				}
+				return { output: result.content, details: { tool: descriptor.name } };
+			},
+		} as never);
+	});
+	return { extension: defineExtension({ name: "throughline-tools", tools }), readOnly };
 }
 
 /** ThroughLine's orchestration instructions, passed by the client in T3_CODE_ORCHESTRATION_INSTRUCTIONS. */

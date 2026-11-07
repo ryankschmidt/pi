@@ -8,6 +8,7 @@ import { startProgram } from "../src/client.ts";
 import { ENGINE, PROTOCOL_VERSION } from "../src/protocol.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/faux-program.ts", import.meta.url));
+const toolsFixture = fileURLToPath(new URL("./fixtures/faux-tools-program.ts", import.meta.url));
 const roots: string[] = [];
 after(async () => {
 	for (const root of roots) await rm(root, { recursive: true, force: true });
@@ -82,4 +83,28 @@ test("after a kill the next program takes the store; transcript.jsonl holds each
 	assert.deepEqual(ids, [...new Set(ids)].sort((a, b) => a - b), "each entry once, in id order");
 	assert.equal(lines.filter((l) => "conversation" in l).length, 1);
 	assert.equal(ids.length >= 8, true);
+});
+
+test("a ThroughLine tool call leaves on the link with the stock tool name and its answer reaches the model", async () => {
+	const { store, cwd } = await fresh();
+	const program = startProgram(process.execPath, [toolsFixture, store, cwd]);
+	const calls: { id: string; name: string; arguments: unknown }[] = [];
+	program.onToolCall((call) => {
+		calls.push(call);
+		program.answerTool(call.id, { content: [{ type: "text", text: "task-1 is completed" }] });
+	});
+	await program.hello;
+	const { submissionId } = (await program.call("submit", { content: "check", requestId: "t1" })) as {
+		submissionId: number;
+	};
+	const settled = (await program.call("wait", { submissionId })) as { status: string };
+	assert.equal(settled.status, "done");
+	assert.deepEqual(
+		calls.map((call) => [call.name, call.arguments]),
+		[["task_status", { taskId: "task-1" }]],
+	);
+	await program.call("drain");
+	await program.exited;
+	const transcript = await readFile(join(store, "transcript.jsonl"), "utf8");
+	assert.match(transcript, /task-1 is completed/, "the tool result is recorded in the conversation");
 });

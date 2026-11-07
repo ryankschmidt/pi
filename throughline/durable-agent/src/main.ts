@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // Command line of the Pi Durable agent program.
 //   node src/main.ts --store <dir> --agent <id> --cwd <dir> [--model provider/model] [--runtime-mode <mode>]
+//                    [--tools <file>]
 // Models, logins, settings and skills come from pi's agent folder (PI_CODING_AGENT_DIR, default ~/.pi/agent).
-// ThroughLine passes its MCP endpoint and credential (T3_MCP_URL, T3_MCP_BEARER_TOKEN) and its orchestration
-// instructions (T3_CODE_ORCHESTRATION_INSTRUCTIONS) in the environment, as it does for its stock Pi bridge.
+// ThroughLine passes the list of its tools as a JSON file (--tools) and its orchestration instructions
+// (T3_CODE_ORCHESTRATION_INSTRUCTIONS) in the environment. Tool calls go back to ThroughLine over stdin and stdout;
+// no MCP endpoint or credential is passed to the agent.
 
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -23,9 +26,11 @@ import {
 import {
 	Approvals,
 	createApprovalsExtension,
-	createMcpExtension,
 	createOrchestrationExtension,
+	createThroughLineToolsExtension,
 	type RuntimeMode,
+	type ToolDescriptor,
+	ToolLink,
 } from "./throughline-extensions.ts";
 
 const { values } = parseArgs({
@@ -35,11 +40,12 @@ const { values } = parseArgs({
 		cwd: { type: "string" },
 		model: { type: "string" },
 		"runtime-mode": { type: "string" },
+		tools: { type: "string" },
 	},
 });
 if (!values.store || !values.agent) {
 	process.stderr.write(
-		"usage: main.ts --store <dir> --agent <id> --cwd <dir> [--model provider/model] [--runtime-mode <mode>]\n",
+		"usage: main.ts --store <dir> --agent <id> --cwd <dir> [--model provider/model] [--runtime-mode <mode>] [--tools <file>]\n",
 	);
 	process.exit(2);
 }
@@ -52,15 +58,17 @@ const envs = new ExecutionEnvs(cwd);
 const initial = await initialModel(settings, models, values.model);
 const approvals = new Approvals();
 if (values["runtime-mode"]) approvals.mode = values["runtime-mode"] as RuntimeMode;
-const mcp = await createMcpExtension(process.env, log);
+const toolLink = new ToolLink();
+const descriptors: ToolDescriptor[] = values.tools ? JSON.parse(readFileSync(resolve(values.tools), "utf8")) : [];
+const tools = createThroughLineToolsExtension(descriptors, toolLink);
 const registry = createAgentRegistry(settings, cwd, {
 	// Claude Code's standard prompt renders before every other section.
 	first: [createClaudeStandardPromptExtension((provider, modelId) => models.getModel(provider, modelId)?.api)],
 	after: [
 		createToolSearchExtension(),
-		mcp.extension,
+		tools.extension,
 		createOrchestrationExtension(process.env),
-		createApprovalsExtension(approvals, mcp.readOnly),
+		createApprovalsExtension(approvals, tools.readOnly),
 	],
 });
 const code = await runProgram({
@@ -73,11 +81,11 @@ const code = await runProgram({
 	},
 	harness: { models, registry, settings: harnessSettings(settings), env: envs.env },
 	approvals,
+	tools: toolLink,
 	reap: true,
 	input: process.stdin,
 	output: process.stdout,
 	log,
 });
-await mcp.close().catch(() => undefined);
 await envs.cleanup(BACKGROUND_CONTEXT);
 process.exit(code);

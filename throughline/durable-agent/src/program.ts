@@ -35,7 +35,7 @@ import {
 	PROTOCOL_VERSION,
 	type ProgramMessage,
 } from "./protocol.ts";
-import type { ApprovalAnswer, Approvals, RuntimeMode } from "./throughline-extensions.ts";
+import type { ApprovalAnswer, Approvals, RuntimeMode, ToolLink } from "./throughline-extensions.ts";
 import { attachTranscript, type TranscriptWriter } from "./transcript.ts";
 
 export const DURABLE_VERSION: string = (() => {
@@ -83,6 +83,8 @@ export type ProgramOptions = {
 	log?: (line: string) => void;
 	/** ThroughLine approvals: the beforeTool hook asks through this object; the program carries its questions. */
 	approvals?: Approvals;
+	/** ThroughLine's tools: their calls leave on this link as `tool` messages and return as `toolResult`. */
+	tools?: ToolLink;
 	/** Kill commands an earlier killed program left running, and watch this one's (see reaper.ts). */
 	reap?: boolean;
 	/** Called once the program has stopped, with its exit code. */
@@ -187,6 +189,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		};
 		send(hello);
 		approvals?.connect((question) => send({ kind: "question", question }));
+		options.tools?.connect((call) => send({ kind: "tool", ...call }));
 
 		// A rewind moves the thread to another conversation; its watches end and the client opens new ones.
 		async function stopWatches() {
@@ -371,6 +374,10 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			}
 			if (message.kind === "ping") {
 				send({ kind: "pong", id: message.id });
+				return;
+			}
+			if (message.kind === "toolResult") {
+				options.tools?.answer(message.id, { content: message.content, ...(message.isError === undefined ? {} : { isError: message.isError }) });
 				return;
 			}
 			if (message.kind === "cancel") {
