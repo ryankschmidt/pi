@@ -5,14 +5,14 @@
     "sha": "f9a26365568127461c47a07a37dcb42c140a3ac5"
   },
   "fork": {
-    "sha": "e8738cb32643140f69c0955a3f962c1ef733b4a5"
+    "sha": "f88556b0a0da13867a406785150c6572a6a051e6"
   },
   "merge_base": "f9a26365568127461c47a07a37dcb42c140a3ac5",
   "counts": {
     "upstream_edit": 0,
     "upstream_removed": 0,
     "fork_added": 0,
-    "fork_namespace": 65
+    "fork_namespace": 66
   },
   "admitted": {
     "upstream_edit_count": 0,
@@ -79,7 +79,7 @@
     {
       "path": "throughline-seam.json",
       "class": "fork-namespace",
-      "reason": "e8738cb32643140f69c0955a3f962c1ef733b4a5 seam: cover the guard link fix\n9c102e37d1a25078d8eac2a0198947c2736d68f9 seam: cover the test-before-switch and node checks\naa00e512c3237ea5d0e9700e5e853ad49c7fedc7 seam: cover the guard exit-code change\ncb1f5193581a4a88e287c9ac4557188a70d691af seam: cover the runtime installer for the Durable agent program\n2555b4574d9dd55f0acc5d10ee37f5df44857691 seam: cover the carry files in the Durable agent program\n8c1cbfb0913da3e52e99ad8531d405a828fdd6f2 seam: cover the tool-link change in the Durable agent program\nddbe159d22b677c8520c80c2fb7c1590e0a0146b seam: cover the build 2 agent program files\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\nd82a2db77979543cfdf64c2affa4287dbf920821 seam: ledger and exact-path coverage for the Pi Durable agent program\n0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths\n34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)\nffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage\na7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces\n8360421492bba5ca62c3edd7ed5c148b1095e4bd seam: declare exact product coverage and regenerate twelve-path ledger\n37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
+      "reason": "f88556b0a0da13867a406785150c6572a6a051e6 namespace: commit-msg hook runs the Dan card gate\ne8738cb32643140f69c0955a3f962c1ef733b4a5 seam: cover the guard link fix\n9c102e37d1a25078d8eac2a0198947c2736d68f9 seam: cover the test-before-switch and node checks\naa00e512c3237ea5d0e9700e5e853ad49c7fedc7 seam: cover the guard exit-code change\ncb1f5193581a4a88e287c9ac4557188a70d691af seam: cover the runtime installer for the Durable agent program\n2555b4574d9dd55f0acc5d10ee37f5df44857691 seam: cover the carry files in the Durable agent program\n8c1cbfb0913da3e52e99ad8531d405a828fdd6f2 seam: cover the tool-link change in the Durable agent program\nddbe159d22b677c8520c80c2fb7c1590e0a0146b seam: cover the build 2 agent program files\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\nd82a2db77979543cfdf64c2affa4287dbf920821 seam: ledger and exact-path coverage for the Pi Durable agent program\n0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths\n34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)\nffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage\na7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces\n8360421492bba5ca62c3edd7ed5c148b1095e4bd seam: declare exact product coverage and regenerate twelve-path ledger\n37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -89,6 +89,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "f88556b0a0da13867a406785150c6572a6a051e6 namespace: commit-msg hook runs the Dan card gate",
         "e8738cb32643140f69c0955a3f962c1ef733b4a5 seam: cover the guard link fix",
         "9c102e37d1a25078d8eac2a0198947c2736d68f9 seam: cover the test-before-switch and node checks",
         "aa00e512c3237ea5d0e9700e5e853ad49c7fedc7 seam: cover the guard exit-code change",
@@ -1164,6 +1165,23 @@
       "commits": [
         "34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)",
         "a7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/hooks/commit-msg",
+      "class": "fork-namespace",
+      "reason": "f88556b0a0da13867a406785150c6572a6a051e6 namespace: commit-msg hook runs the Dan card gate",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "f88556b0a0da13867a406785150c6572a6a051e6 namespace: commit-msg hook runs the Dan card gate"
       ],
       "legacy_rules": []
     },
