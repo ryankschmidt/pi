@@ -8,7 +8,7 @@
 // dist, node_modules) into <runtime>/versions/<id>/, makes it read-only, pins its hash, and points
 // <runtime>/current at it. The launcher's agent path is <runtime>/current/throughline/durable-agent/src/main.ts.
 //
-//   node install/runtime.ts install  [--from <pi fork root>] [--runtime <dir>] [--throughline-commit <sha>]
+//   node install/runtime.ts install  [--from <pi fork root>] [--runtime <dir>] [--throughline-commit <sha>] [--skip-tests]
 //   node install/runtime.ts rollback [--runtime <dir>]
 //   node install/runtime.ts check    [--runtime <dir>] [--service <health hub service json>] [--json]
 //
@@ -49,6 +49,8 @@ const DURABLE_CLIENT_MARKERS = ["Pi Durable agent program exited", "routePiAdapt
 
 /** What the copy holds: the top-level paths taken from the Pi fork root. */
 const COPIED = ["package.json", "node_modules", "packages", "throughline/durable-agent"];
+/** The agent program's own tests, run inside a new copy before it is switched in. */
+const AGENT_TESTS = ["test/program.test.ts", "test/carry.test.ts", "test/reaper.test.ts"];
 /** The program hash covers the code that runs: the agent program and every workspace package's dist. */
 function programRoots(root: string): string[] {
 	const roots = [join(root, "throughline/durable-agent/src"), join(root, "throughline/durable-agent/package.json")];
@@ -113,7 +115,7 @@ export function readPin(runtime: string): Pin | null {
 	return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Pin) : null;
 }
 
-export function install(from: string, runtime: string, throughlineCommit: string | null): Pin {
+export function install(from: string, runtime: string, throughlineCommit: string | null, options: { runTests?: boolean } = {}): Pin {
 	const dirty = git(from, "status", "--porcelain", "--untracked-files=no");
 	if (dirty) {
 		throw new Error(
@@ -133,6 +135,16 @@ export function install(from: string, runtime: string, throughlineCommit: string
 		execFileSync("cp", ["-cR", join(from, path), join(target, dirname(path) === "." ? "" : dirname(path))]);
 	}
 	if (!existsSync(join(target, ENTRY))) throw new Error(`refused: the copy has no ${ENTRY}`);
+	if (options.runTests) {
+		// The copy's own tests run inside the copy before anything points at it; a fold or rebuild that breaks the
+		// agent program is refused here and live threads keep the version they have.
+		try {
+			execFileSync(process.execPath, ["--test", ...AGENT_TESTS], { cwd: join(target, "throughline/durable-agent"), stdio: "pipe" });
+		} catch (error) {
+			const out = String((error as { stdout?: Buffer }).stdout ?? "").split("\n").filter((l) => /✖|^ℹ (pass|fail)/.test(l));
+			throw new Error(`refused: the agent program's tests fail in the new copy (left unused at ${target}; current is unchanged):\n${out.join("\n")}`);
+		}
+	}
 	const program = treeHash(target, programRoots(target));
 	const tree = treeHash(target, COPIED.map((p) => join(target, p)));
 	const pin: Pin = {
@@ -207,6 +219,9 @@ export function check(runtime: string): CheckResult {
 			}
 		}
 	}
+	const node = shellValue(STATIC_CONFIG, "RYAN_FCCL_REAL_NODE");
+	facts.launcher_node = node;
+	if (!node || !existsSync(node)) problems.push(`the node the launcher runs the agent with is missing (${node ?? "unset"}); a Homebrew node upgrade removes old versions`);
 	const configured = shellValue(STATIC_CONFIG, "RYAN_FCCL_PI_DURABLE_AGENT");
 	const embedded = shellValue(LAUNCHER, "EMBEDDED_PI_DURABLE_AGENT");
 	facts.launcher_agent_path = configured;
@@ -249,13 +264,14 @@ function main(): void {
 			"throughline-commit": { type: "string" },
 			service: { type: "string" },
 			json: { type: "boolean", default: false },
+			"skip-tests": { type: "boolean", default: false },
 		},
 	});
 	const runtime = resolve(values.runtime as string);
 	const verb = positionals[0];
 	try {
 		if (verb === "install") {
-			const pin = install(resolve(values.from as string), runtime, (values["throughline-commit"] as string) ?? null);
+			const pin = install(resolve(values.from as string), runtime, (values["throughline-commit"] as string) ?? null, { runTests: !values["skip-tests"] });
 			console.log(JSON.stringify(pin, null, 2));
 		} else if (verb === "rollback") {
 			console.log(JSON.stringify(rollback(runtime), null, 2));
