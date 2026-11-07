@@ -19,6 +19,7 @@ Build 1 of the Pi Durable build map v3 (`/Users/Admin/core-root/vault/01_Project
 4. Installs the same extensions every start, resumes what the last process left, and says `hello` with the protocol version, engine, Durable version, store, agent and pid.
 5. Serves calls (`src/protocol.ts`): submit, wait, abort, compact, fork, watch, unwatch, entries, abortTask, status, drain. Closing stdin stops it, as with Pi's RPC mode.
 6. ThroughLine's tools: ThroughLine hands over its tool list as a JSON file (`--tools`); each becomes a Durable tool named `throughline__<tool>`. A call leaves as a `tool` message on stdout and its answer comes back as a `toolResult` on stdin; ThroughLine's server makes the MCP call for the thread that owns the pipe. The agent holds no MCP client, endpoint or credential (protocol 2, Nov 6, 2026).
+7. Carrying a stock Pi thread (`--carry-from <session file>`, `src/carry.ts`): every entry of the stock session file is written into the store in one commit, messages as Durable entries with their original messages (images whole), context edits as Durable context edits, and system prompt snapshots, model changes and custom records as data-only entries. `carried-from.json` beside the store names the source file and its sha256. A re-carry appends only the entries after the last one carried. Nothing is cut.
 
 ## Run
 
@@ -31,7 +32,7 @@ Models, logins and settings come from `PI_CODING_AGENT_DIR` (default `~/.pi/agen
 ## Checks
 
 ```bash
-node --test test/*.test.ts                      # 5 tests over a scripted fake model
+node --test test/*.test.ts                      # 6 tests (5 over a scripted fake model, 1 carry)
 ../../node_modules/.bin/tsc --noEmit -p tsconfig.json
 PI_CODING_AGENT_DIR=<agent dir> node proof/kill-proof.ts <run folder> <evidence folder>   # real model
 node proof/decide.ts <evidence folder> '<JEV answers>' <request id> <results sha256>

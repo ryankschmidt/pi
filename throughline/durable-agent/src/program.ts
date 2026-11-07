@@ -22,6 +22,7 @@ import {
 	type TaskId,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { carrySession } from "./carry.ts";
 import { lockStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
 import { reapLeftovers, startReaper } from "./reaper.ts";
 import {
@@ -85,6 +86,8 @@ export type ProgramOptions = {
 	approvals?: Approvals;
 	/** ThroughLine's tools: their calls leave on this link as `tool` messages and return as `toolResult`. */
 	tools?: ToolLink;
+	/** A stock Pi session file to carry into the bound conversation before resuming (see carry.ts). */
+	carryFrom?: string;
 	/** Kill commands an earlier killed program left running, and watch this one's (see reaper.ts). */
 	reap?: boolean;
 	/** Called once the program has stopped, with its exit code. */
@@ -169,6 +172,10 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				stored.agentId = options.agentId;
 				stored.conversationId = id;
 			}, context);
+		}
+		if (options.carryFrom !== undefined) {
+			const summary = await carrySession(opened, conversation, options.carryFrom, options.storeDir, context);
+			log(`carried ${JSON.stringify(summary.carried)} from ${summary.path} (${summary.alreadyCarried} already carried)`);
 		}
 		const approvals = options.approvals;
 		if (approvals) {

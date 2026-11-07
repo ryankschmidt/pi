@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Command line of the Pi Durable agent program.
 //   node src/main.ts --store <dir> --agent <id> --cwd <dir> [--model provider/model] [--runtime-mode <mode>]
-//                    [--tools <file>]
+//                    [--tools <file>] [--carry-from <stock Pi session file>]
 // Models, logins, settings and skills come from pi's agent folder (PI_CODING_AGENT_DIR, default ~/.pi/agent).
 // ThroughLine passes the list of its tools as a JSON file (--tools) and its orchestration instructions
 // (T3_CODE_ORCHESTRATION_INSTRUCTIONS) in the environment. Tool calls go back to ThroughLine over stdin and stdout;
@@ -41,6 +41,7 @@ const { values } = parseArgs({
 		model: { type: "string" },
 		"runtime-mode": { type: "string" },
 		tools: { type: "string" },
+		"carry-from": { type: "string" },
 	},
 });
 if (!values.store || !values.agent) {
@@ -82,6 +83,7 @@ const code = await runProgram({
 	harness: { models, registry, settings: harnessSettings(settings), env: envs.env },
 	approvals,
 	tools: toolLink,
+	...(values["carry-from"] ? { carryFrom: resolve(values["carry-from"]) } : {}),
 	reap: true,
 	input: process.stdin,
 	output: process.stdout,
