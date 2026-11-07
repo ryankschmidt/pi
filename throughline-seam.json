@@ -5,14 +5,14 @@
     "sha": "f9a26365568127461c47a07a37dcb42c140a3ac5"
   },
   "fork": {
-    "sha": "f88556b0a0da13867a406785150c6572a6a051e6"
+    "sha": "b28e2380d6c64142d47516143151d4a3affa5c4a"
   },
   "merge_base": "f9a26365568127461c47a07a37dcb42c140a3ac5",
   "counts": {
     "upstream_edit": 0,
     "upstream_removed": 0,
     "fork_added": 0,
-    "fork_namespace": 66
+    "fork_namespace": 68
   },
   "admitted": {
     "upstream_edit_count": 0,
@@ -1172,7 +1172,7 @@
       "path": "throughline/hooks/design-gate.test.ts",
       "class": "fork-namespace",
       "reason": "Regression tests for staged package-boundary checks.",
-      "reason_source": "design-tests-nov-7-2026",
+      "reason_source": "authored",
       "imported_private_symbols": [],
       "schema_assumptions": [],
       "contract_inspection": "Tests run the gate against staged changes in an isolated Git repository.",
@@ -1187,7 +1187,7 @@
       "path": "throughline/hooks/design-gate.ts",
       "class": "fork-namespace",
       "reason": "Protect public package imports and require a JEV-checked design alternative for Durable-agent changes.",
-      "reason_source": "design-tests-nov-7-2026",
+      "reason_source": "authored",
       "imported_private_symbols": [],
       "schema_assumptions": [],
       "contract_inspection": "Commit hooks consume the fork-owned gate; live JEV decisions are stored under the repository git common directory.",
