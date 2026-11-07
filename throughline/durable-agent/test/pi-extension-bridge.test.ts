@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ const IMAGES = join(INSTALLED, "subscription-images.js");
 const fixtures = fileURLToPath(new URL("./fixtures/", import.meta.url));
 const COUNTING_GATE = join(fixtures, "bridge-extensions", "counting-gate.js");
 const program = join(fixtures, "faux-bridge-program.ts");
+const main = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const ONE_PIXEL_PNG =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const roots: string[] = [];
@@ -182,5 +183,25 @@ describe("a Durable agent with boundary-gate.js and subscription-images.js bridg
 		assert.match(transcript, /CONTEXT BOUNDARY/, "the gate's handoff summary replaced the compaction summary");
 		assert.match(transcript, /boundary-gate hold: post-boundary onboarding is reading, never writing/);
 		assert.equal(await readFile(join(root, "a.txt"), "utf8"), "one\n", "the held bash call did not run");
+	});
+});
+
+describe("the agent program", () => {
+	test("bridges the extensions in the agent folder at start and says what it mapped", async () => {
+		const root = await tempRoot();
+		const agentDir = join(root, "agent");
+		await mkdir(join(agentDir, "extensions"), { recursive: true });
+		await mkdir(join(root, "cwd"));
+		await copyFile(COUNTING_GATE, join(agentDir, "extensions", "counting-gate.js"));
+		const agent = startProgram(
+			process.execPath,
+			[main, "--store", join(root, "store"), "--agent", "a1", "--cwd", join(root, "cwd")],
+			{ env: { ...process.env, PI_CODING_AGENT_DIR: agentDir } },
+		);
+		await agent.hello;
+		await agent.call("drain");
+		await agent.exited;
+		assert.match(agent.stderr(), /pi-extension:counting-gate: mapped tool_call->ToolTask\.beforeTool/);
+		assert.match(agent.stderr(), /unmapped session_compact \(Durable has no after-compaction hook\)/);
 	});
 });

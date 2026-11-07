@@ -392,8 +392,20 @@ function generationTaskHooks(handlers: (event: string) => Handler[], report: Ext
 	const agentEnd = handlers("agent_end");
 	const turns = { index: 0 };
 	const fireTurnEnd = async (message: unknown, toolResults: unknown[], api: HookApi, ctx: Context) => {
-		const event = { type: "turn_end", turnIndex: turns.index++, message, toolResults };
-		for (const handler of turnEnd) await state.guard(report, "turn_end", () => handler(event, state.ctx(report, api, undefined, ctx)));
+		// A Durable turn that reaches these hooks completed; Pi's boundary fields start empty, as on a stock turn.
+		const event = { type: "turn_end", turnIndex: turns.index++, message, toolResults, outcome: "completed", entries: [], continue: false };
+		for (const handler of turnEnd) {
+			const result = await state.guard(report, "turn_end", () => handler(event, state.ctx(report, api, undefined, ctx)));
+			if (result !== undefined) {
+				state.unmapped(
+					report,
+					"event",
+					"turn_end result",
+					"appending boundary entries and continuing from turn_end has no Durable hook; the result was not applied",
+					result,
+				);
+			}
+		}
 	};
 	return {
 		beforeRequest: async (request: { readonly messages: readonly unknown[] }, api: HookApi, ctx: Context) => {
@@ -429,7 +441,12 @@ function generationTaskHooks(handlers: (event: string) => Handler[], report: Ext
 		afterResponse: async (message: { usage?: unknown; provider?: string; model?: string }, api: HookApi, ctx: Context) => {
 			state.observeUsage(String(api.conversationId), message);
 			for (const handler of messageEnd) {
-				await state.guard(report, "message_end", () => handler({ type: "message_end", message }, state.ctx(report, api, undefined, ctx)));
+				const result = (await state.guard(report, "message_end", () =>
+					handler({ type: "message_end", message }, state.ctx(report, api, undefined, ctx)),
+				)) as { message?: unknown } | undefined;
+				if (result?.message !== undefined) {
+					state.unmapped(report, "event", "message_end result", "Durable afterResponse cannot replace a message; not applied");
+				}
 			}
 		},
 		...(turnEnd.length === 0
