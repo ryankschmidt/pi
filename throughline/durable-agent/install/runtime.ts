@@ -227,7 +227,7 @@ function writeService(file: string, result: CheckResult): void {
 	const row = {
 		name: "pi-durable-guard",
 		display_name: "Pi Durable setup",
-		status: result.ok ? "ok" : "error",
+		status: result.ok ? "ok" : "fail",
 		message: result.ok
 			? `holds · agent ${String(result.facts.version ?? "").slice(0, 12)} pinned and read-only · launcher path right · app has the Durable client`
 			: `REGRESSED · ${result.problems.join(" · ")}`,
@@ -270,7 +270,8 @@ function main(): void {
 		}
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : String(error));
-		process.exitCode = 1;
+		// A check that could not run exits 3, so the Health Hub adapter tells it apart from a check that found a regression.
+		process.exitCode = verb === "check" ? 3 : 1;
 	}
 }
 
