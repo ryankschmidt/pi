@@ -1169,6 +1169,36 @@
       "legacy_rules": []
     },
     {
+      "path": "throughline/hooks/design-gate.test.ts",
+      "class": "fork-namespace",
+      "reason": "Regression tests for staged package-boundary checks.",
+      "reason_source": "design-tests-nov-7-2026",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "Tests run the gate against staged changes in an isolated Git repository.",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/hooks/design-gate.ts",
+      "class": "fork-namespace",
+      "reason": "Protect public package imports and require a JEV-checked design alternative for Durable-agent changes.",
+      "reason_source": "design-tests-nov-7-2026",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "Commit hooks consume the fork-owned gate; live JEV decisions are stored under the repository git common directory.",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [],
+      "legacy_rules": []
+    },
+    {
       "path": "throughline/hooks/commit-msg",
       "class": "fork-namespace",
       "reason": "f88556b0a0da13867a406785150c6572a6a051e6 namespace: commit-msg hook runs the Dan card gate",
@@ -1328,6 +1358,9 @@
           "docs/throughline/tax-approvals/README.json",
           "throughline-seam.json",
           "throughline/hooks/pre-commit",
+          "throughline/hooks/commit-msg",
+          "throughline/hooks/design-gate.ts",
+          "throughline/hooks/design-gate.test.ts",
           "docs/throughline/tax-approvals/upstream-pin-transition-2026-11-04.json"
         ]
       },

@@ -1,4 +1,5 @@
 #!/bin/sh
+node "$(git rev-parse --show-toplevel)/throughline/hooks/design-gate.ts" alternative "$1" || exit 1
 # Dan card gate (hooks/dan-card-gate in the workbench). A commit that draws on IndyDevDan's code is checked against the
 # adopt-or-adapt card: code collects the staged facts, JEV answers the card questions, code approves or blocks. A commit with
 # no Dan trigger passes without a JEV call. A missing gate refuses the commit, because a missing check must never pass quietly.
