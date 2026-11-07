@@ -109,6 +109,9 @@ export function discoverPiExtensions(cwd: string, agentDir: string): string[] {
 	for (const dir of [join(cwd, ".pi", "extensions"), join(agentDir, "extensions")]) {
 		if (!existsSync(dir)) continue;
 		for (const name of readdirSync(dir).sort()) {
+			// These two installed files are deliberately not bridged: the standard prompt is
+			// already ported, and rtk must not rewrite Durable agents' shell commands.
+			if (dir === join(agentDir, "extensions") && (name === "rtk.ts" || name === "claude-standard-prompt.js")) continue;
 			const full = join(dir, name);
 			if (statSync(full).isDirectory()) {
 				const index = ["index.ts", "index.js"].map((file) => join(full, file)).find((file) => existsSync(file));

@@ -48,6 +48,14 @@ function fakeApi(conversationId = "c1") {
 const CONTEXT = { abortSignal: new AbortController().signal } as never;
 
 describe("Ryan's installed Pi extensions", () => {
+	test("discovery excludes rtk and the already-ported Claude prompt without excluding the four requested extensions", async () => {
+		const root = await tempRoot();
+		const dir = join(root, "extensions");
+		await mkdir(dir);
+		const names = ["boundary-gate.js", "pi-lead-boundary.js", "show-me-prompts.js", "subscription-images.js", "rtk.ts", "claude-standard-prompt.js"];
+		for (const name of names) await writeFile(join(dir, name), "export default () => {};");
+		assert.deepEqual(discoverPiExtensions(root, root).map((p) => p.split("/").at(-1)), names.slice(0, 4).sort());
+	});
 	test("every installed file is bridged with a report of what mapped and what did not", async () => {
 		const paths = discoverPiExtensions(await tempRoot(), join(INSTALLED, ".."));
 		const lines: string[] = [];
