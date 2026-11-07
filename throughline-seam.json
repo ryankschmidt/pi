@@ -5,14 +5,14 @@
     "sha": "f9a26365568127461c47a07a37dcb42c140a3ac5"
   },
   "fork": {
-    "sha": "f88556b0a0da13867a406785150c6572a6a051e6"
+    "sha": "3ed3b10d6b342c16d51f18216818565b52c36f86"
   },
   "merge_base": "f9a26365568127461c47a07a37dcb42c140a3ac5",
   "counts": {
     "upstream_edit": 0,
     "upstream_removed": 0,
     "fork_added": 0,
-    "fork_namespace": 66
+    "fork_namespace": 70
   },
   "admitted": {
     "upstream_edit_count": 0,
@@ -79,7 +79,7 @@
     {
       "path": "throughline-seam.json",
       "class": "fork-namespace",
-      "reason": "f88556b0a0da13867a406785150c6572a6a051e6 namespace: commit-msg hook runs the Dan card gate\ne8738cb32643140f69c0955a3f962c1ef733b4a5 seam: cover the guard link fix\n9c102e37d1a25078d8eac2a0198947c2736d68f9 seam: cover the test-before-switch and node checks\naa00e512c3237ea5d0e9700e5e853ad49c7fedc7 seam: cover the guard exit-code change\ncb1f5193581a4a88e287c9ac4557188a70d691af seam: cover the runtime installer for the Durable agent program\n2555b4574d9dd55f0acc5d10ee37f5df44857691 seam: cover the carry files in the Durable agent program\n8c1cbfb0913da3e52e99ad8531d405a828fdd6f2 seam: cover the tool-link change in the Durable agent program\nddbe159d22b677c8520c80c2fb7c1590e0a0146b seam: cover the build 2 agent program files\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\nd82a2db77979543cfdf64c2affa4287dbf920821 seam: ledger and exact-path coverage for the Pi Durable agent program\n0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths\n34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)\nffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage\na7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces\n8360421492bba5ca62c3edd7ed5c148b1095e4bd seam: declare exact product coverage and regenerate twelve-path ledger\n37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
+      "reason": "93b7880f87dd213d174601c855aff5b9eb0881a5 seam: cover the commit-msg hook\nf88556b0a0da13867a406785150c6572a6a051e6 namespace: commit-msg hook runs the Dan card gate\ne8738cb32643140f69c0955a3f962c1ef733b4a5 seam: cover the guard link fix\n9c102e37d1a25078d8eac2a0198947c2736d68f9 seam: cover the test-before-switch and node checks\naa00e512c3237ea5d0e9700e5e853ad49c7fedc7 seam: cover the guard exit-code change\ncb1f5193581a4a88e287c9ac4557188a70d691af seam: cover the runtime installer for the Durable agent program\n2555b4574d9dd55f0acc5d10ee37f5df44857691 seam: cover the carry files in the Durable agent program\n8c1cbfb0913da3e52e99ad8531d405a828fdd6f2 seam: cover the tool-link change in the Durable agent program\nddbe159d22b677c8520c80c2fb7c1590e0a0146b seam: cover the build 2 agent program files\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\nd82a2db77979543cfdf64c2affa4287dbf920821 seam: ledger and exact-path coverage for the Pi Durable agent program\n0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths\n34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)\nffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage\na7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces\n8360421492bba5ca62c3edd7ed5c148b1095e4bd seam: declare exact product coverage and regenerate twelve-path ledger\n37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -89,6 +89,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "93b7880f87dd213d174601c855aff5b9eb0881a5 seam: cover the commit-msg hook",
         "f88556b0a0da13867a406785150c6572a6a051e6 namespace: commit-msg hook runs the Dan card gate",
         "e8738cb32643140f69c0955a3f962c1ef733b4a5 seam: cover the guard link fix",
         "9c102e37d1a25078d8eac2a0198947c2736d68f9 seam: cover the test-before-switch and node checks",
@@ -393,7 +394,7 @@
     {
       "path": "throughline/durable-agent/src/main.ts",
       "class": "fork-namespace",
-      "reason": "f74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole\n77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable\na31136abb39f3a7d9d2df80c08a5db536e864689 namespace: Durable agents load installed Pi extensions through the bridge\nf74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole\n77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -403,6 +404,8 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable",
+        "a31136abb39f3a7d9d2df80c08a5db536e864689 namespace: Durable agents load installed Pi extensions through the bridge",
         "f74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole",
         "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token",
         "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program",
@@ -412,9 +415,9 @@
       "legacy_rules": []
     },
     {
-      "path": "throughline/durable-agent/src/program.ts",
+      "path": "throughline/durable-agent/src/pi-extension-bridge.ts",
       "class": "fork-namespace",
-      "reason": "f74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole\n77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\n9cd1aadb930ed7b763d2343c09ce864ef7d7fe0d namespace: compact can wait for its task; configure takes instructions\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable\n5bb034489263f9784fe7df2cea9922669874df98 namespace: exclude duplicate and retired extensions from Durable bridge\na31136abb39f3a7d9d2df80c08a5db536e864689 namespace: Durable agents load installed Pi extensions through the bridge\n98fd2edc4fe7ab3827fa47f2c62996c6c772f3cb namespace: Pi-extension bridge for Pi Durable agents",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -424,6 +427,27 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable",
+        "5bb034489263f9784fe7df2cea9922669874df98 namespace: exclude duplicate and retired extensions from Durable bridge",
+        "a31136abb39f3a7d9d2df80c08a5db536e864689 namespace: Durable agents load installed Pi extensions through the bridge",
+        "98fd2edc4fe7ab3827fa47f2c62996c6c772f3cb namespace: Pi-extension bridge for Pi Durable agents"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/src/program.ts",
+      "class": "fork-namespace",
+      "reason": "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable\nf74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole\n77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\n9cd1aadb930ed7b763d2343c09ce864ef7d7fe0d namespace: compact can wait for its task; configure takes instructions\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable",
         "f74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole",
         "77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token",
         "9cd1aadb930ed7b763d2343c09ce864ef7d7fe0d namespace: compact can wait for its task; configure takes instructions",
@@ -540,6 +564,23 @@
       "legacy_rules": []
     },
     {
+      "path": "throughline/durable-agent/test/fixtures/bridge-extensions/counting-gate.js",
+      "class": "fork-namespace",
+      "reason": "98fd2edc4fe7ab3827fa47f2c62996c6c772f3cb namespace: Pi-extension bridge for Pi Durable agents",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "98fd2edc4fe7ab3827fa47f2c62996c6c772f3cb namespace: Pi-extension bridge for Pi Durable agents"
+      ],
+      "legacy_rules": []
+    },
+    {
       "path": "throughline/durable-agent/test/fixtures/detached-parent.ts",
       "class": "fork-namespace",
       "reason": "822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes",
@@ -553,6 +594,24 @@
       "marker": false,
       "commits": [
         "822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/test/fixtures/faux-bridge-program.ts",
+      "class": "fork-namespace",
+      "reason": "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable\n98fd2edc4fe7ab3827fa47f2c62996c6c772f3cb namespace: Pi-extension bridge for Pi Durable agents",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable",
+        "98fd2edc4fe7ab3827fa47f2c62996c6c772f3cb namespace: Pi-extension bridge for Pi Durable agents"
       ],
       "legacy_rules": []
     },
@@ -604,6 +663,26 @@
       "marker": false,
       "commits": [
         "f74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole"
+      ],
+      "legacy_rules": []
+    },
+    {
+      "path": "throughline/durable-agent/test/pi-extension-bridge.test.ts",
+      "class": "fork-namespace",
+      "reason": "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable\n5bb034489263f9784fe7df2cea9922669874df98 namespace: exclude duplicate and retired extensions from Durable bridge\na31136abb39f3a7d9d2df80c08a5db536e864689 namespace: Durable agents load installed Pi extensions through the bridge\n98fd2edc4fe7ab3827fa47f2c62996c6c772f3cb namespace: Pi-extension bridge for Pi Durable agents",
+      "reason_source": "commit-subjects",
+      "imported_private_symbols": [],
+      "schema_assumptions": [],
+      "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
+      "conflict_rule": "review",
+      "conflict_rule_source": "review",
+      "conflict_rule_inferred": false,
+      "marker": false,
+      "commits": [
+        "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable",
+        "5bb034489263f9784fe7df2cea9922669874df98 namespace: exclude duplicate and retired extensions from Durable bridge",
+        "a31136abb39f3a7d9d2df80c08a5db536e864689 namespace: Durable agents load installed Pi extensions through the bridge",
+        "98fd2edc4fe7ab3827fa47f2c62996c6c772f3cb namespace: Pi-extension bridge for Pi Durable agents"
       ],
       "legacy_rules": []
     },
@@ -1403,6 +1482,7 @@
           "throughline/durable-agent/src/client.ts",
           "throughline/durable-agent/src/lock.ts",
           "throughline/durable-agent/src/main.ts",
+          "throughline/durable-agent/src/pi-extension-bridge.ts",
           "throughline/durable-agent/src/program.ts",
           "throughline/durable-agent/src/protocol.ts",
           "throughline/durable-agent/src/reaper.ts",
@@ -1410,11 +1490,14 @@
           "throughline/durable-agent/src/throughline-extensions.ts",
           "throughline/durable-agent/src/transcript.ts",
           "throughline/durable-agent/test/fixtures/detached-parent.ts",
+          "throughline/durable-agent/test/fixtures/bridge-extensions/counting-gate.js",
+          "throughline/durable-agent/test/fixtures/faux-bridge-program.ts",
           "throughline/durable-agent/test/fixtures/faux-program.ts",
           "throughline/durable-agent/test/fixtures/faux-tools-program.ts",
           "throughline/durable-agent/test/fixtures/stock-session.jsonl",
           "throughline/durable-agent/test/carry.test.ts",
           "throughline/durable-agent/test/program.test.ts",
+          "throughline/durable-agent/test/pi-extension-bridge.test.ts",
           "throughline/durable-agent/test/reaper.test.ts",
           "throughline/durable-agent/tsconfig.json"
         ]
