@@ -14,7 +14,6 @@ import {
 	type ToolExecutionResult,
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
 
 /** Where the installed copy of the image module sits, relative to this program. */
 export const IMAGE_MODULE_DIR = fileURLToPath(new URL("../capabilities/subscription-images/", import.meta.url));
@@ -67,7 +66,8 @@ async function buildImageTools(dir: string, defaultCwd: string): Promise<ToolReg
 	}
 }
 
-const CODING_TOOL_NAMES: ReadonlySet<string> = new Set((CodingTools.tools ?? []).map((tool) => tool.name));
+/** The image tools the pinned module must provide, no more and no fewer. */
+export const IMAGE_TOOL_NAMES: readonly string[] = ["generate_image", "edit_image", "inspect_image"];
 
 function toolsOf(exports: Record<string, unknown>, defaultCwd: string): ToolRegistration[] {
 	const descriptions = exports.imageToolDescriptions;
@@ -77,15 +77,17 @@ function toolsOf(exports: Record<string, unknown>, defaultCwd: string): ToolRegi
 	if (!isRecord(parameters)) throw new Error("imageToolParameters is not an object");
 	if (typeof run !== "function") throw new Error("runImageTool is not a function");
 	const names = Object.keys(descriptions);
-	if (names.length === 0) throw new Error("imageToolDescriptions names no tools");
-	// The registry accepts the same tool name from two extensions; an image tool must never shadow a coding tool.
-	const clash = names.filter((name) => CODING_TOOL_NAMES.has(name));
-	if (clash.length > 0) throw new Error(`${clash.join(", ")} would replace Durable's coding tool of that name`);
+	// The capability is exactly these three tools: a copy that lacks one would silently drop generating or editing,
+	// and an extra name is a module this program was not written for.
+	const missing = IMAGE_TOOL_NAMES.filter((name) => !names.includes(name));
+	if (missing.length > 0) throw new Error(`the copy lacks ${missing.join(", ")}`);
+	const extra = names.filter((name) => !IMAGE_TOOL_NAMES.includes(name));
+	if (extra.length > 0) throw new Error(`the copy declares tools this program does not know: ${extra.join(", ")}`);
 	return names.map((name) => {
 		const description = descriptions[name];
 		const schema = parameters[name];
 		if (typeof description !== "string" || description.length === 0) throw new Error(`${name} has no description`);
-		if (!isRecord(schema) || schema.type !== "object") throw new Error(`${name} has no object parameter schema`);
+		if (!isRecord(schema) || schema.type !== "object" || !isRecord(schema.properties)) throw new Error(`${name} has no object parameter schema`);
 		return defineTool({
 			name,
 			description,

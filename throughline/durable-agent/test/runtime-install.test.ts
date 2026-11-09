@@ -28,12 +28,16 @@ function fakeFork(): string {
 	return root;
 }
 
-/** A stand-in for the shipped subscription-images folder that exports the contract the image tools need. */
-function fakeImageModule(): string {
+const IMAGE_TOOLS = ["generate_image", "edit_image", "inspect_image"];
+
+/** A stand-in for the shipped subscription-images folder exporting the contract for `tools` (all three by default). */
+function fakeImageModule(tools: string[] = IMAGE_TOOLS): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-images-"));
+	const descriptions = Object.fromEntries(tools.map((name) => [name, `The ${name} tool`]));
+	const parameters = Object.fromEntries(tools.map((name) => [name, { type: "object", properties: {} }]));
 	writeFileSync(
 		join(dir, "shared.mjs"),
-		'export const imageToolDescriptions = { inspect_image: "Look at an image" };\nexport const imageToolParameters = { inspect_image: { type: "object", properties: {} } };\n',
+		`export const imageToolDescriptions = ${JSON.stringify(descriptions)};\nexport const imageToolParameters = ${JSON.stringify(parameters)};\n`,
 	);
 	writeFileSync(join(dir, "effects.mjs"), "export const runImageTool = () => undefined;\n");
 	return dir;
@@ -97,6 +101,14 @@ test("the image module is pinned inside the install: missing or incompatible ref
 	const copy = join(runtime, "versions", pin.id, "throughline/durable-agent/capabilities/subscription-images/effects.mjs");
 	assert.equal(statSync(copy).mode & 0o222, 0, "the pinned image module is read-only");
 	assert.ok(!check(runtime, imageModule, showMe).problems.some((p) => p.includes("image module")));
+
+	// A copy missing any one of the three tools is refused and the installed version stays current.
+	for (const lacking of IMAGE_TOOLS) {
+		const partial = fakeImageModule(IMAGE_TOOLS.filter((name) => name !== lacking));
+		await assert.rejects(install(fork, runtime, null, { imageModule: partial, showMe }), new RegExp(`the copy lacks ${lacking}\\); current is unchanged`));
+		assert.equal(readPin(runtime)?.id, pin.id, `current is unchanged after a copy without ${lacking}`);
+	}
+	await assert.rejects(install(fork, runtime, null, { imageModule: fakeImageModule([...IMAGE_TOOLS, "erase_image"]), showMe }), /does not know: erase_image/);
 
 	writeFileSync(join(imageModule, "effects.mjs"), "export const runImageTool = () => 'newer';\n");
 	assert.ok(check(runtime, imageModule, showMe).problems.includes("image module pinned older than shipped; the next agent install picks it up"));

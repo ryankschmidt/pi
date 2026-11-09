@@ -26,7 +26,7 @@ import {
 	ModelRuntime,
 	SettingsManager,
 } from "./setup.ts";
-import { expandSkillInput } from "./skill-commands.ts";
+import { skillCommandEntry } from "./skill-commands.ts";
 import {
 	Approvals,
 	createApprovalsExtension,
@@ -66,7 +66,7 @@ if (values["runtime-mode"]) approvals.mode = values["runtime-mode"] as RuntimeMo
 const toolLink = new ToolLink();
 const descriptors: ToolDescriptor[] = values.tools ? JSON.parse(readFileSync(resolve(values.tools), "utf8")) : [];
 const tools = createThroughLineToolsExtension(descriptors, toolLink);
-const resources = new AgentResources(settings, cwd);
+const resources = new AgentResources(settings, cwd, join(resolve(values.store), "transcript.jsonl"));
 if (!existsSync(join(PINNED_SKILLS_DIR, "show-me/SKILL.md"))) {
 	log(`skill commands: no pinned show-me at ${join(PINNED_SKILLS_DIR, "show-me/SKILL.md")}; /show-me expands only if pi's skills list it`);
 }
@@ -106,8 +106,8 @@ const code = await runProgram({
 	tools: toolLink,
 	...(values["carry-from"] ? { carryFrom: resolve(values["carry-from"]) } : {}),
 	reap: true,
-	// Skill commands expand once, at submission, so the stored turn is what the model is sent on every later request.
-	admitInput: (content, conversationCwd) => expandSkillInput(content, resources.folder(conversationCwd ?? cwd).skills),
+	// A skill command stores its exact expansion beside the typed message at submission; requests replay the stored text.
+	recordBeforeInput: (content, conversationCwd) => skillCommandEntry(content, resources.folder(conversationCwd ?? cwd).skills),
 	input: process.stdin,
 	output: process.stdout,
 	log,

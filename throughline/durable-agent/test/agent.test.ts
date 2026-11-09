@@ -67,11 +67,21 @@ async function modelEndpoint(replies: Reply[]) {
 	return { bodies, port: (server.address() as AddressInfo).port };
 }
 
+/** A loadable image module copy declaring `tools`, each with an object schema unless `schemas` overrides it. */
+function imageCopy(tools: string[], schemas: Record<string, object> = {}): { shared: string; effects: string } {
+	const descriptions = Object.fromEntries(tools.map((name) => [name, `The ${name} tool`]));
+	const parameters = Object.fromEntries(tools.map((name) => [name, schemas[name] ?? { type: "object", properties: {} }]));
+	return {
+		shared: `export const imageToolDescriptions = ${JSON.stringify(descriptions)};\nexport const imageToolParameters = ${JSON.stringify(parameters)};\n`,
+		effects: "export const runImageTool = async () => ({ content: [], details: null });\n",
+	};
+}
+
 /** What the image module copy holds: the shipped module, nothing, or a copy that loads but is broken in one way. */
 type Images = "shipped" | "none" | { shared: string; effects: string };
 
 /** The program copied as an install lays it out, a pi agent folder pointing at the endpoint, and a working folder. */
-function layout(port: number, options: { images: Images }) {
+function layout(port: number, options: { images: Images; sameNamedShowMe?: boolean }) {
 	const root = mkdtempSync(join(tmpdir(), "durable-agent-real-"));
 	roots.push(root);
 	const programDir = join(root, "throughline/durable-agent");
@@ -109,11 +119,24 @@ function layout(port: number, options: { images: Images }) {
 	const other = join(agentDir, "skills-elsewhere/other/SKILL.md");
 	mkdirSync(dirname(other), { recursive: true });
 	writeFileSync(other, "---\nname: other\ndescription: Another skill.\n---\nOther.\n");
-	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ skills: [other], compaction: { enabled: false } }));
-	writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), `${APPEND_MARKER}\n`);
-
+	const skills = [other];
 	const cwd = join(root, "work");
 	mkdirSync(cwd);
+	if (options.sameNamedShowMe) {
+		// A model-callable show-me in each place pi looks: its default folder, the project, and a configured path.
+		const rival = (file: string, where: string) => {
+			mkdirSync(dirname(file), { recursive: true });
+			writeFileSync(file, `---\nname: show-me\ndescription: A rival show-me.\n---\nRIVAL-${where}\n`);
+		};
+		rival(join(agentDir, "skills/show-me/SKILL.md"), "DEFAULT");
+		rival(join(cwd, ".pi/skills/show-me/SKILL.md"), "PROJECT");
+		const configured = join(agentDir, "configured/show-me/SKILL.md");
+		rival(configured, "CONFIGURED");
+		skills.unshift(configured);
+	}
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ skills, compaction: { enabled: false } }));
+	writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), `${APPEND_MARKER}\n`);
+
 	writeFileSync(join(cwd, "AGENTS.md"), "Project rule: keep answers short.\n");
 	writeFileSync(join(cwd, "pixel.png"), Buffer.from(PIXEL, "base64"));
 	const start = (): AgentProgram => {
@@ -132,6 +155,20 @@ async function turn(program: AgentProgram, content: string, requestId: string): 
 	const { submissionId } = (await program.call("submit", { content, requestId })) as { submissionId: number };
 	return ((await program.call("wait", { submissionId })) as { status: string }).status;
 }
+
+type Stored = { kind: string; id: number; model?: { role: string; content: unknown }[]; data?: Record<string, string> };
+/** The entries the agent stored, read from its transcript projection: what ThroughLine and show-me read. */
+const storedEntries = (root: string): Stored[] =>
+	readFileSync(join(root, "store/transcript.jsonl"), "utf8")
+		.split("\n")
+		.filter((line) => line.trim().length > 0)
+		.map((line) => JSON.parse(line) as { entry?: Stored })
+		.flatMap((line) => (line.entry ? [line.entry] : []));
+const storedUserTexts = (root: string) =>
+	storedEntries(root)
+		.filter((entry) => entry.kind === "pi.user")
+		.map((entry) => entry.model?.[0]?.content)
+		.map((content) => (typeof content === "string" ? content : JSON.stringify(content)));
 
 async function stop(program: AgentProgram): Promise<void> {
 	await program.call("drain");
@@ -162,6 +199,8 @@ test("the prompt carries APPEND_SYSTEM.md once, the project context and Pi and D
 	const durableReadme = /Pi Durable: (\S+README\.md)/.exec(system)?.[1];
 	assert.ok(durableReadme !== undefined && existsSync(durableReadme), `Pi Durable's README is named and exists (${durableReadme})`);
 	assert.ok(existsSync(getDocsPath()));
+	// The prompt names this agent's transcript, so show-me can read the turns.
+	assert.match(system, /This conversation's transcript [^\n]*store\/transcript\.jsonl/);
 	await stop(program);
 });
 
@@ -199,9 +238,40 @@ test("a skill command keeps the instructions it was submitted with after the ski
 	assert.equal(history.length, 2, JSON.stringify(history));
 	assert.match(history[0] ?? "", /BODY-AS-SUBMITTED[\s\S]*the plan$/, "the first turn replays what it was submitted with");
 	assert.doesNotMatch(history.join("\n"), /BODY-AFTER-EDIT/);
-	// The stored turn itself holds the expansion, so the store, not the skill file, decides what is replayed.
-	assert.match(readFileSync(join(setup.root, "store/transcript.jsonl"), "utf8"), /BODY-AS-SUBMITTED/);
+	// Stored: the user's message as typed (what ThroughLine's snapshot, fork carry and show-me read), and beside it a
+	// data-only record of the exact expansion, which is what the model was sent.
+	assert.deepEqual(storedUserTexts(setup.root), ["/show-me the plan", "and now?"]);
+	const records = storedEntries(setup.root).filter((entry) => entry.kind === "throughline.skill-command");
+	assert.equal(records.length, 1);
+	assert.equal(records[0]?.model, undefined, "the record never enters model context itself");
+	assert.equal(records[0]?.data?.typed, "/show-me the plan");
+	assert.match(records[0]?.data?.expanded ?? "", /BODY-AS-SUBMITTED[\s\S]*the plan$/);
+
+	// A fork at the answer keeps the stored expansion for the earlier turn.
+	const answer = storedEntries(setup.root).find((entry) => entry.kind === "pi.assistant");
+	await second.call("fork", { entryId: answer?.id });
+	assert.equal(await turn(second, "in the fork", "k3"), "done", second.stderr());
+	const forked = userTexts(model.bodies.at(-1) as RequestBody);
+	assert.match(forked[0] ?? "", /BODY-AS-SUBMITTED[\s\S]*the plan$/, "the fork replays the stored expansion");
+	assert.equal(forked.at(-1), "in the fork");
 	await stop(second);
+});
+
+test("the pinned show-me wins over same-named skills in pi's default, project and configured skills", { timeout: 60_000 }, async () => {
+	const model = await modelEndpoint([{ text: "ok" }]);
+	const setup = layout(model.port, { images: "none", sameNamedShowMe: true });
+	writeFileSync(setup.showMe, "---\nname: show-me\ndescription: Show.\ndisable-model-invocation: true\n---\nPINNED-BODY\n");
+	const program = setup.start();
+	await program.hello;
+	for (const [index, typed] of ["/show-me x", "/skill:show-me y"].entries()) {
+		assert.equal(await turn(program, typed, `c${index}`), "done", program.stderr());
+		const sent = userTexts(model.bodies.at(-1) as RequestBody).at(-1) ?? "";
+		assert.match(sent, /PINNED-BODY/, typed);
+		assert.doesNotMatch(sent, /RIVAL-/, typed);
+	}
+	// The rival is model-callable, so it would be listed for the model; the pinned command-only skill replaces it.
+	assert.doesNotMatch(systemText(model.bodies.at(-1) as RequestBody), /A rival show-me/);
+	await stop(program);
 });
 
 test("inspect_image runs from the installed copy of the image module, without an approval question", { timeout: 60_000 }, async () => {
@@ -222,22 +292,9 @@ test("an absent, unloadable or incompatible image module never stops the agent: 
 		["absent", "none", /image tools unavailable: no installed copy at .*capabilities\/subscription-images\/shared\.mjs/],
 		["throws on import", { shared: "throw new Error('broken copy');\n", effects: "export {};\n" }, /did not load \(broken copy\)/],
 		["exports the wrong names", { shared: "export const unrelated = 1;\n", effects: "export const other = 2;\n" }, /does not provide usable image tools \(imageToolDescriptions is not an object\)/],
-		[
-			"a tool without an object schema",
-			{
-				shared: 'export const imageToolDescriptions = { inspect_image: "Look" };\nexport const imageToolParameters = { inspect_image: "not a schema" };\n',
-				effects: "export const runImageTool = async () => ({ content: [], details: null });\n",
-			},
-			/inspect_image has no object parameter schema/,
-		],
-		[
-			"a tool named like a coding tool",
-			{
-				shared: 'export const imageToolDescriptions = { read: "Clash" };\nexport const imageToolParameters = { read: { type: "object", properties: {} } };\n',
-				effects: "export const runImageTool = async () => ({ content: [], details: null });\n",
-			},
-			/read would replace Durable's coding tool of that name/,
-		],
+		["lacks two of the three tools", imageCopy(["inspect_image"]), /the copy lacks generate_image, edit_image/],
+		["a tool without an object schema", imageCopy(["generate_image", "edit_image", "inspect_image"], { inspect_image: { type: "object" } }), /inspect_image has no object parameter schema/],
+		["an unknown extra tool, such as one named like a coding tool", imageCopy(["generate_image", "edit_image", "inspect_image", "read"]), /does not know: read/],
 	];
 	for (const [name, images, reason] of cases) {
 		const model = await modelEndpoint([{ text: "ok" }]);

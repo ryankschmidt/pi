@@ -35,6 +35,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { createSkillCommandsExtension } from "./skill-commands.ts";
 
 export { ModelRuntime, SettingsManager };
 
@@ -71,7 +72,8 @@ export type FolderResources = { contextFiles: { path: string; content: string }[
 
 /**
  * Skills pinned inside the installed program (show-me, copied by the installer from Ship Warden's shipped copy), so the
- * skill commands ThroughLine's menu offers expand without an edit to pi's settings. Loaded after pi's own skill list.
+ * skill commands ThroughLine's menu offers expand without an edit to pi's settings. A pinned skill wins over any skill
+ * of the same name in pi's default, project or configured skills: the install checked these bytes, the others it never saw.
  */
 export const PINNED_SKILLS_DIR = fileURLToPath(new URL("../capabilities/skills/", import.meta.url));
 
@@ -84,10 +86,13 @@ export class AgentResources {
 	readonly #fallbackCwd: string;
 	readonly #folders = new Map<string, FolderResources>();
 	#append: string | undefined | null = null;
+	/** The agent's transcript.jsonl beside its store, named in the prompt so a skill such as show-me can read the turns. */
+	readonly transcript: string | undefined;
 
-	constructor(settings: SettingsManager, fallbackCwd: string) {
+	constructor(settings: SettingsManager, fallbackCwd: string, transcript?: string) {
 		this.#settings = settings;
 		this.#fallbackCwd = fallbackCwd;
+		this.transcript = transcript;
 	}
 
 	/** The working folder a request's prompt is built for. */
@@ -100,10 +105,15 @@ export class AgentResources {
 		let found = this.#folders.get(cwd);
 		if (found === undefined) {
 			const agentDir = getAgentDir();
-			const skillPaths = [...this.#settings.getSkillPaths(), ...(existsSync(PINNED_SKILLS_DIR) ? [PINNED_SKILLS_DIR] : [])];
+			// Pi's loader keeps the first skill of a name, so the pinned ones are loaded on their own and replace same-named others.
+			const pinned = existsSync(PINNED_SKILLS_DIR)
+				? loadSkills({ cwd, agentDir, skillPaths: [PINNED_SKILLS_DIR], includeDefaults: false }).skills
+				: [];
+			const pinnedNames = new Set(pinned.map((skill) => skill.name));
+			const others = loadSkills({ cwd, agentDir, skillPaths: this.#settings.getSkillPaths(), includeDefaults: true }).skills;
 			found = {
 				contextFiles: loadProjectContextFiles({ cwd, agentDir }),
-				skills: loadSkills({ cwd, agentDir, skillPaths, includeDefaults: true }).skills,
+				skills: [...others.filter((skill) => !pinnedNames.has(skill.name)), ...pinned],
 			};
 			this.#folders.set(cwd, found);
 		}
@@ -191,6 +201,11 @@ export function createPiPrompt(resources: AgentResources) {
 				const text = formatSkillsForPrompt(resources.folder(resources.cwdOf(input)).skills, "read").trim();
 				return text.length > 0 ? text : undefined;
 			}),
+			section("transcript", () =>
+				resources.transcript === undefined
+					? undefined
+					: `This conversation's transcript (Pi Durable's projection of every stored entry, all branches; the live branch ends at the newest conversation): ${resources.transcript}`,
+			),
 			section("cwd", (input) => resources.cwdOf(input).replace(/\\/g, "/")),
 		],
 	});
@@ -208,6 +223,7 @@ export function createAgentRegistry(
 	for (const extension of extra.first ?? []) registry.install(extension);
 	registry.install(CodingTools);
 	registry.install(createPiPrompt(resources));
+	registry.install(createSkillCommandsExtension());
 	for (const extension of extra.after ?? []) registry.install(extension);
 	return registry;
 }

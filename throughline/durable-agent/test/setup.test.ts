@@ -118,6 +118,19 @@ test("a body closed mid-stream fails that fetch only; the process does not end",
 	assert.ok(abandoned.alive && abandoned.code === 0, `exit ${String(abandoned.code)}: ${abandoned.stderr}`);
 });
 
+test("undici's internal Client error, raised when a cut response meets a finished handler, does not end the process", { timeout: 30_000 }, async () => {
+	// The socket is cut mid-response; the request's error handler throws, so undici emits "error" on the origin Client.
+	// Without the listener configureHttp puts on every Client and Pool, EventEmitter throws it and the process ends.
+	const port = await server((_req, res) => {
+		res.writeHead(200, { "content-type": "text/plain" });
+		res.write("partial");
+		setTimeout(() => res.socket?.destroy(), 30);
+	});
+	const run = await probe([`http://127.0.0.1:${port}/cut`, "10000"], { PROBE_HANDLER_THROWS: "1" });
+	assert.ok(run.alive && run.code === 0, `exit ${String(run.code)}: ${run.stderr}`);
+	assert.doesNotMatch(run.stderr, /Unhandled 'error' event/);
+});
+
 test("pi's httpProxy setting sends requests through the proxy as a tunnel", { timeout: 30_000 }, async () => {
 	const target = await server((_req, res) => res.end("from target"));
 	// The dispatcher tunnels every request (proxyTunnel, as the coding agent sets it), so the proxy sees a CONNECT.

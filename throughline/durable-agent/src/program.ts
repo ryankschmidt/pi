@@ -14,6 +14,7 @@ import {
 	type ConversationId,
 	type ConversationWatch,
 	defineDoc,
+	type EntryDraft,
 	type EntryId,
 	Harness,
 	type HarnessOptions,
@@ -94,10 +95,10 @@ export type ProgramOptions = {
 	/** Called once the program has stopped, with its exit code. */
 	onExit?: (code: number) => void;
 	/**
-	 * Rewrites a submitted input before it is stored, given the conversation's working folder; the stored user message
-	 * is what this returns, so every later request replays it unchanged (skill commands, see skill-commands.ts).
+	 * An entry to store just before a submitted input, given the conversation's working folder; the input itself is
+	 * stored as typed (skill commands store their exact expansion this way, see skill-commands.ts).
 	 */
-	admitInput?: (content: UserInput, cwd: string | undefined) => UserInput;
+	recordBeforeInput?: (content: UserInput, cwd: string | undefined) => EntryDraft | undefined;
 };
 
 export const EXIT = { ok: 0, failed: 1, alreadyOwned: 3, protocol: 4 } as const;
@@ -220,14 +221,22 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 							? { type: "continue", requestId: params.requestId }
 							: {
 									type: "input",
-									content: options.admitInput
-										? options.admitInput(params.content as UserInput, (await conversation.agent(context)).cwd)
-										: params.content,
+									content: params.content,
 									requestId: params.requestId,
 									...(params.whenBusy === undefined ? {} : { whenBusy: params.whenBusy }),
 									...(params.whenIdle === undefined ? {} : { whenIdle: params.whenIdle }),
 								}
 					) as SubmissionDraft;
+					const record =
+						draft.type === "input" && options.recordBeforeInput
+							? options.recordBeforeInput(draft.content, (await conversation.agent(context)).cwd)
+							: undefined;
+					if (record !== undefined) {
+						// A data-only write is stored at once, even while a run is busy, so it always precedes its input. A
+						// repeated request id repeats neither the record nor the input.
+						const requestId = typeof params.requestId === "string" ? `${params.requestId}:record` : undefined;
+						await conversation.submit({ type: "write", entry: record, ...(requestId === undefined ? {} : { requestId }) }, context);
+					}
 					const submission = await conversation.submit(draft, context);
 					return { submissionId: submission.id };
 				}
