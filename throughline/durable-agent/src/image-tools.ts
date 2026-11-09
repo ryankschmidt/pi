@@ -1,61 +1,104 @@
 // The subscription image tools (generate_image, edit_image, inspect_image) as native Durable tools. Their code is the
 // shipped subscription-images module, copied by the installer into `capabilities/subscription-images/` beside this
-// program and pinned with it, so a later ship of that module never changes a running install. The agent starts
-// without the tools when the copy is absent; the installer, not a live thread, is where a missing copy is refused.
+// program and pinned with it, so a later ship of that module never changes a running install. An absent, unloadable
+// or incompatible copy never stops the agent: it starts without the tools and says why. The installer refuses such a
+// copy before it switches an install in, using the same check.
 
 import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Context, JsonValue } from "@earendil-works/chord";
-import { defineExtension, defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@earendil-works/pi-durable";
+import {
+	defineExtension,
+	defineTool,
+	type ToolExecutionApi,
+	type ToolExecutionResult,
+	type ToolRegistration,
+} from "@earendil-works/pi-durable";
+import { CodingTools } from "@earendil-works/pi-durable/tools";
 
 /** Where the installed copy of the image module sits, relative to this program. */
-const IMAGE_MODULE_DIR = fileURLToPath(new URL("../capabilities/subscription-images/", import.meta.url));
+export const IMAGE_MODULE_DIR = fileURLToPath(new URL("../capabilities/subscription-images/", import.meta.url));
 /** The image tools that never write or call the broker; approvals pass them like read. */
 export const READ_ONLY_IMAGE_TOOLS: ReadonlySet<string> = new Set(["inspect_image"]);
 const EXTENSION_NAME = "subscription-images";
 
-type ImageModule = {
-	imageToolDescriptions: Record<string, string>;
-	imageToolParameters: Record<string, object>;
-	runImageTool(
-		name: string,
-		args: unknown,
-		cwd: string,
-		signal?: AbortSignal,
-	): Promise<{ content: ToolExecutionResult["output"]; details: unknown }>;
-};
+type RunImageTool = (
+	name: string,
+	args: unknown,
+	cwd: string,
+	signal?: AbortSignal,
+) => Promise<{ content: ToolExecutionResult["output"]; details: unknown }>;
 
 /**
- * The image tools extension. Always installed under the same name, so stored conversations resolve it after a
- * restart; with no module copy it has no tools and `missing` says why.
+ * The image tools extension, always under the same name so stored conversations resolve it after a restart. When the
+ * copy cannot give working tools, the extension has none, `missing` says why, and the agent starts anyway.
  */
-export async function loadImageTools(defaultCwd: string) {
-	const module = await importModule(IMAGE_MODULE_DIR);
-	if (typeof module === "string") return { extension: defineExtension({ name: EXTENSION_NAME }), missing: module };
-	const tools = Object.keys(module.imageToolDescriptions).map((name) =>
-		defineTool({
-			name,
-			description: module.imageToolDescriptions[name],
-			parameters: module.imageToolParameters[name],
-			execute: async (input: unknown, api: ToolExecutionApi, context: Context) => {
-				const response = await module.runImageTool(name, input, api.env?.cwd ?? defaultCwd, context.abortSignal);
-				return { output: response.content, details: JSON.parse(JSON.stringify(response.details)) as JsonValue };
-			},
-			// The module's parameters are TypeBox JSON Schema, which Durable accepts as plain JSON Schema.
-		} as never),
-	);
-	return { extension: defineExtension({ name: EXTENSION_NAME, tools }), missing: undefined };
+export async function loadImageTools(defaultCwd: string, dir = IMAGE_MODULE_DIR) {
+	const empty = defineExtension({ name: EXTENSION_NAME });
+	const built = await buildImageTools(dir, defaultCwd);
+	if (typeof built === "string") return { extension: empty, empty, missing: built };
+	return { extension: defineExtension({ name: EXTENSION_NAME, tools: built }), empty, missing: undefined };
 }
 
-// A dynamic import on purpose: the copy lives outside this program's source and its absence must not stop the start.
-async function importModule(dir: string): Promise<ImageModule | string> {
-	const files = ["shared.mjs", "effects.mjs"].map((name) => `${dir}${name}`);
+/** Undefined when the copy at `dir` gives working image tools; otherwise why not. The installer refuses on a reason. */
+export async function imageModuleProblem(dir: string): Promise<string | undefined> {
+	const built = await buildImageTools(dir, dir);
+	return typeof built === "string" ? built : undefined;
+}
+
+// Loading, checking the exported contract and building the tools sit inside one boundary: whatever the copy does wrong
+// becomes a reason, never a thrown error at start. A failure while an image tool runs stays that tool call's failure.
+async function buildImageTools(dir: string, defaultCwd: string): Promise<ToolRegistration[] | string> {
+	const files = ["shared.mjs", "effects.mjs"].map((name) => `${dir}${dir.endsWith("/") ? "" : "/"}${name}`);
 	const absent = files.filter((file) => !existsSync(file));
 	if (absent.length > 0) return `image tools unavailable: no installed copy at ${absent.join(", ")}`;
+	let exports: Record<string, unknown>;
 	try {
+		// A dynamic import on purpose: the copy lives outside this program's source and its absence must not stop the start.
 		const [policy, effects] = await Promise.all(files.map((file) => import(pathToFileURL(file).href)));
-		return { ...policy, ...effects } as ImageModule;
+		exports = { ...policy, ...effects };
 	} catch (error) {
-		return `image tools unavailable: the copy at ${dir} did not load (${error instanceof Error ? error.message : String(error)})`;
+		return `image tools unavailable: the copy at ${dir} did not load (${message(error)})`;
+	}
+	try {
+		return toolsOf(exports, defaultCwd);
+	} catch (error) {
+		return `image tools unavailable: the copy at ${dir} does not provide usable image tools (${message(error)})`;
 	}
 }
+
+const CODING_TOOL_NAMES: ReadonlySet<string> = new Set((CodingTools.tools ?? []).map((tool) => tool.name));
+
+function toolsOf(exports: Record<string, unknown>, defaultCwd: string): ToolRegistration[] {
+	const descriptions = exports.imageToolDescriptions;
+	const parameters = exports.imageToolParameters;
+	const run = exports.runImageTool;
+	if (!isRecord(descriptions)) throw new Error("imageToolDescriptions is not an object");
+	if (!isRecord(parameters)) throw new Error("imageToolParameters is not an object");
+	if (typeof run !== "function") throw new Error("runImageTool is not a function");
+	const names = Object.keys(descriptions);
+	if (names.length === 0) throw new Error("imageToolDescriptions names no tools");
+	// The registry accepts the same tool name from two extensions; an image tool must never shadow a coding tool.
+	const clash = names.filter((name) => CODING_TOOL_NAMES.has(name));
+	if (clash.length > 0) throw new Error(`${clash.join(", ")} would replace Durable's coding tool of that name`);
+	return names.map((name) => {
+		const description = descriptions[name];
+		const schema = parameters[name];
+		if (typeof description !== "string" || description.length === 0) throw new Error(`${name} has no description`);
+		if (!isRecord(schema) || schema.type !== "object") throw new Error(`${name} has no object parameter schema`);
+		return defineTool({
+			name,
+			description,
+			// The module's parameters are TypeBox JSON Schema, which Durable accepts as plain JSON Schema.
+			parameters: schema,
+			execute: async (input: unknown, api: ToolExecutionApi, context: Context) => {
+				const response = await (run as RunImageTool)(name, input, api.env?.cwd ?? defaultCwd, context.abortSignal);
+				return { output: response.content, details: JSON.parse(JSON.stringify(response.details ?? null)) as JsonValue };
+			},
+		} as never);
+	});
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));

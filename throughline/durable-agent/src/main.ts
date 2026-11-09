@@ -7,8 +7,8 @@
 // (T3_CODE_ORCHESTRATION_INSTRUCTIONS) in the environment. Tool calls go back to ThroughLine over stdin and stdout;
 // no MCP endpoint or credential is passed to the agent.
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
@@ -17,13 +17,16 @@ import { configureHttp } from "./http.ts";
 import { loadImageTools, READ_ONLY_IMAGE_TOOLS } from "./image-tools.ts";
 import { runProgram } from "./program.ts";
 import {
+	AgentResources,
 	createAgentRegistry,
+	PINNED_SKILLS_DIR,
 	ExecutionEnvs,
 	harnessSettings,
 	initialModel,
 	ModelRuntime,
 	SettingsManager,
 } from "./setup.ts";
+import { expandSkillInput } from "./skill-commands.ts";
 import {
 	Approvals,
 	createApprovalsExtension,
@@ -63,19 +66,33 @@ if (values["runtime-mode"]) approvals.mode = values["runtime-mode"] as RuntimeMo
 const toolLink = new ToolLink();
 const descriptors: ToolDescriptor[] = values.tools ? JSON.parse(readFileSync(resolve(values.tools), "utf8")) : [];
 const tools = createThroughLineToolsExtension(descriptors, toolLink);
+const resources = new AgentResources(settings, cwd);
+if (!existsSync(join(PINNED_SKILLS_DIR, "show-me/SKILL.md"))) {
+	log(`skill commands: no pinned show-me at ${join(PINNED_SKILLS_DIR, "show-me/SKILL.md")}; /show-me expands only if pi's skills list it`);
+}
 const images = await loadImageTools(cwd);
 if (images.missing !== undefined) log(images.missing);
-const registry = createAgentRegistry(settings, cwd, {
-	// Claude Code's standard prompt renders before every other section.
-	first: [createClaudeStandardPromptExtension((provider, modelId) => models.getModel(provider, modelId)?.api)],
-	after: [
-		createToolSearchExtension(),
-		images.extension,
-		tools.extension,
-		createOrchestrationExtension(process.env),
-		createApprovalsExtension(approvals, new Set([...tools.readOnly, ...READ_ONLY_IMAGE_TOOLS])),
-	],
-});
+const registryWith = (imageExtension: typeof images.extension) =>
+	createAgentRegistry(resources, {
+		// Claude Code's standard prompt renders before every other section.
+		first: [createClaudeStandardPromptExtension((provider, modelId) => models.getModel(provider, modelId)?.api)],
+		after: [
+			createToolSearchExtension(),
+			imageExtension,
+			tools.extension,
+			createOrchestrationExtension(process.env),
+			createApprovalsExtension(approvals, new Set([...tools.readOnly, ...READ_ONLY_IMAGE_TOOLS])),
+		],
+	});
+let registry: ReturnType<typeof registryWith>;
+try {
+	registry = registryWith(images.extension);
+} catch (error) {
+	// The image add-on clashed with another extension (a tool name ThroughLine also sends, say): start without it.
+	if (images.missing !== undefined) throw error;
+	log(`image tools unavailable: ${error instanceof Error ? error.message : String(error)}`);
+	registry = registryWith(images.empty);
+}
 const code = await runProgram({
 	storeDir: resolve(values.store),
 	agentId: values.agent,
@@ -89,6 +106,8 @@ const code = await runProgram({
 	tools: toolLink,
 	...(values["carry-from"] ? { carryFrom: resolve(values["carry-from"]) } : {}),
 	reap: true,
+	// Skill commands expand once, at submission, so the stored turn is what the model is sent on every later request.
+	admitInput: (content, conversationCwd) => expandSkillInput(content, resources.folder(conversationCwd ?? cwd).skills),
 	input: process.stdin,
 	output: process.stdout,
 	log,

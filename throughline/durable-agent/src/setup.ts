@@ -4,12 +4,17 @@
 // files, RPC mode and extension bus are not used.
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Context } from "@earendil-works/chord";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	formatSkillsForPrompt,
 	getAgentDir,
+	getDocsPath,
+	getExamplesPath,
+	getReadmePath,
 	loadProjectContextFiles,
 	loadSkills,
 	ModelRuntime,
@@ -20,7 +25,6 @@ import {
 import {
 	createRegistry,
 	defineExtension,
-	type ConversationId,
 	type EnvTarget,
 	type Extension,
 	type HarnessSettings,
@@ -31,7 +35,6 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { createSkillCommandsExtension } from "./skill-commands.ts";
 
 export { ModelRuntime, SettingsManager };
 
@@ -67,14 +70,19 @@ export function harnessSettings(settings: SettingsManager): HarnessSettings {
 export type FolderResources = { contextFiles: { path: string; content: string }[]; skills: Skill[] };
 
 /**
+ * Skills pinned inside the installed program (show-me, copied by the installer from Ship Warden's shipped copy), so the
+ * skill commands ThroughLine's menu offers expand without an edit to pi's settings. Loaded after pi's own skill list.
+ */
+export const PINNED_SKILLS_DIR = fileURLToPath(new URL("../capabilities/skills/", import.meta.url));
+
+/**
  * Pi's resources for the program: the global APPEND_SYSTEM.md, read once, and each folder's context files and skills,
- * loaded once per folder as pi does at startup. The prompt and the skill commands share one copy.
+ * loaded once per folder as pi does at startup. The prompt and skill-command submission share one copy.
  */
 export class AgentResources {
 	readonly #settings: SettingsManager;
 	readonly #fallbackCwd: string;
 	readonly #folders = new Map<string, FolderResources>();
-	readonly #cwdByConversation = new Map<ConversationId, string>();
 	#append: string | undefined | null = null;
 
 	constructor(settings: SettingsManager, fallbackCwd: string) {
@@ -82,25 +90,20 @@ export class AgentResources {
 		this.#fallbackCwd = fallbackCwd;
 	}
 
-	/** The folder of a request's prompt input; remembered for the conversation so its skill commands match. */
+	/** The working folder a request's prompt is built for. */
 	cwdOf(input: PromptInput): string {
-		const cwd = input.env?.cwd ?? input.agent.cwd ?? this.#fallbackCwd;
-		this.#cwdByConversation.set(input.conversationId, cwd);
-		return cwd;
+		return input.env?.cwd ?? input.agent.cwd ?? this.#fallbackCwd;
 	}
 
-	/** The folder a conversation's prompt was last built for; the program's folder before its first prompt here. */
-	cwdOfConversation(conversationId: ConversationId): string {
-		return this.#cwdByConversation.get(conversationId) ?? this.#fallbackCwd;
-	}
-
-	folder(cwd: string): FolderResources {
+	/** Context files and skills of a working folder; the program's own folder when none is given. */
+	folder(cwd: string = this.#fallbackCwd): FolderResources {
 		let found = this.#folders.get(cwd);
 		if (found === undefined) {
 			const agentDir = getAgentDir();
+			const skillPaths = [...this.#settings.getSkillPaths(), ...(existsSync(PINNED_SKILLS_DIR) ? [PINNED_SKILLS_DIR] : [])];
 			found = {
 				contextFiles: loadProjectContextFiles({ cwd, agentDir }),
-				skills: loadSkills({ cwd, agentDir, skillPaths: this.#settings.getSkillPaths(), includeDefaults: true }).skills,
+				skills: loadSkills({ cwd, agentDir, skillPaths, includeDefaults: true }).skills,
 			};
 			this.#folders.set(cwd, found);
 		}
@@ -139,6 +142,20 @@ const PREAMBLE =
 	"You are a coding agent run by ThroughLine's Pi Durable agent program. Help users inspect files, run commands, and modify code.";
 const PI_PROMPT_NAME = "pi-prompt";
 
+// Durable agents work on the Pi harness, Pi Durable and this program, so they keep stock pi's pointer to current
+// documentation, scoped to this program instead of interactive pi.
+const DURABLE_PACKAGE_DIR = (() => {
+	let directory = dirname(createRequire(import.meta.url).resolve("@earendil-works/pi-durable"));
+	while (!existsSync(join(directory, "package.json")) && dirname(directory) !== directory) directory = dirname(directory);
+	return directory;
+})();
+const DOCS = `Pi and Pi Durable documentation (read when working on the Pi harness, Pi Durable, their SDKs, extensions, skills, models or providers):
+- Pi: ${getReadmePath()}; additional docs ${getDocsPath()}; examples ${getExamplesPath()} (extensions, custom tools, SDK)
+- Pi Durable: ${join(DURABLE_PACKAGE_DIR, "README.md")}; specification and docs ${join(DURABLE_PACKAGE_DIR, "docs")}
+- Resolve docs/... and examples/... under these folders, not the current working directory.
+- Before changing the harness or Pi Durable, read the relevant docs and examples in full, following related cross-references.
+- This agent runs on Pi Durable, not interactive pi: interactive pi's TUI, keybindings and themes do not apply to it.`;
+
 /** The program's system prompt as one Durable extension: preamble, tools, rules, addendum, context, skills, folder. */
 export function createPiPrompt(resources: AgentResources) {
 	const ownTools = (input: PromptInput) => input.agent.tools.map((tool) => tool.name).filter((name) => name in TOOL_LINES);
@@ -160,6 +177,7 @@ export function createPiPrompt(resources: AgentResources) {
 				];
 				return rules.map((rule) => `- ${rule}`).join("\n");
 			}),
+			section("docs", () => DOCS),
 			section("addendum", () => resources.append()),
 			section("project_context", (input) => {
 				const files = resources.folder(resources.cwdOf(input)).contextFiles;
@@ -183,16 +201,13 @@ export function createPiPrompt(resources: AgentResources) {
  * registry, so a restart must install exactly these again ("After a restart, install the same extensions again").
  */
 export function createAgentRegistry(
-	settings: SettingsManager,
-	cwd: string,
+	resources: AgentResources,
 	extra: { first?: readonly Extension[]; after?: readonly Extension[] } = {},
 ): Registry {
-	const resources = new AgentResources(settings, cwd);
 	const registry = createRegistry();
 	for (const extension of extra.first ?? []) registry.install(extension);
 	registry.install(CodingTools);
 	registry.install(createPiPrompt(resources));
-	registry.install(createSkillCommandsExtension(resources));
 	for (const extension of extra.after ?? []) registry.install(extension);
 	return registry;
 }
@@ -240,6 +255,9 @@ export function initialModel(
 		if (cli !== undefined) throw new Error(`MODEL_NOT_RESOLVED: ${resolved.error ?? cli}`);
 		return {};
 	}
+	// The resolver turns an unknown id under a known provider into a custom model. Right for an explicit --model;
+	// for a saved default it means a model that no longer exists, so wait for ThroughLine's configure instead.
+	if (cli === undefined && models.getModel(resolved.model.provider, resolved.model.id) === undefined) return {};
 	// A model named without a level takes pi's default thinking level, as the coding agent does.
 	const thinkingLevel = resolved.thinkingLevel ?? settings.getDefaultThinkingLevel();
 	return {

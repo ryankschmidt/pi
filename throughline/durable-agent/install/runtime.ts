@@ -9,7 +9,7 @@
 // makes it read-only, pins its hash, and points <runtime>/current at it. The launcher's agent path is <runtime>/current/throughline/durable-agent/src/main.ts.
 //
 //   node install/runtime.ts install  [--from <pi fork root>] [--runtime <dir>] [--throughline-commit <sha>] [--skip-tests]
-//                                    [--image-module <shipped subscription-images folder>]
+//                                    [--image-module <shipped subscription-images folder>] [--show-me <shipped show-me.md>]
 //   node install/runtime.ts rollback [--runtime <dir>]
 //   node install/runtime.ts check    [--runtime <dir>] [--service <health hub service json>] [--json]
 //
@@ -36,6 +36,8 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { loadSkills } from "@earendil-works/pi-coding-agent";
+import { imageModuleProblem } from "../src/image-tools.ts";
 
 export const PIN_SCHEMA = "throughline.pi-durable-agent-pin.v1";
 const HOME = homedir();
@@ -50,16 +52,23 @@ const LAUNCHER = join(HOME, ".local/bin/ryan-pi");
 const DURABLE_CLIENT_MARKERS = ["Pi Durable agent program exited", "routePiAdapter"];
 /** The shipped image module (Ship Warden's Tier 2 copy); each install pins the two files the image tools import. */
 export const SHIPPED_IMAGE_MODULE = join(HOME, "core-root/src/tools/subscription-images");
-const IMAGE_COPY = "throughline/durable-agent/capabilities/subscription-images";
+const CAPABILITIES = "throughline/durable-agent/capabilities";
+const IMAGE_COPY = `${CAPABILITIES}/subscription-images`;
 const IMAGE_FILES = ["shared.mjs", "effects.mjs"];
+/**
+ * The shipped show-me skill (Ship Warden's Tier 2 copy of show-me.md); each install pins it as a skill the program
+ * loads, so `/show-me` and `/skill:show-me` expand in every Durable thread without an edit to pi's settings.
+ */
+export const SHIPPED_SHOW_ME = join(HOME, "core-root/src/tools/show-me/show-me.md");
+const SHOW_ME_COPY = `${CAPABILITIES}/skills/show-me/SKILL.md`;
 
 /** What the copy holds: the top-level paths taken from the Pi fork root. */
 const COPIED = ["package.json", "node_modules", "packages", "throughline/durable-agent"];
 /** The agent program's own tests, run inside a new copy before it is switched in. */
-const AGENT_TESTS = ["test/program.test.ts", "test/carry.test.ts", "test/reaper.test.ts", "test/agent.test.ts"];
+const AGENT_TESTS = ["test/program.test.ts", "test/carry.test.ts", "test/reaper.test.ts", "test/agent.test.ts", "test/setup.test.ts"];
 /** The program hash covers the code that runs: the agent program and every workspace package's dist. */
 function programRoots(root: string): string[] {
-	const roots = [join(root, "throughline/durable-agent/src"), join(root, "throughline/durable-agent/package.json"), join(root, IMAGE_COPY)];
+	const roots = [join(root, "throughline/durable-agent/src"), join(root, "throughline/durable-agent/package.json"), join(root, CAPABILITIES)];
 	for (const name of readdirSync(join(root, "packages")).sort()) {
 		const dist = join(root, "packages", name, "dist");
 		if (existsSync(dist)) roots.push(dist, join(root, "packages", name, "package.json"));
@@ -116,23 +125,49 @@ function pointCurrent(runtime: string, id: string): void {
 	renameSync(tmp, join(runtime, "current")); // atomic swap of the link
 }
 
+/** Undefined when pi's own skill loader reads `file` as the command-only skill `name`; otherwise why not. */
+function skillProblem(file: string, name: string): string | undefined {
+	if (!existsSync(file)) return `the shipped ${name} skill is missing at ${file}`;
+	const { skills } = loadSkills({ cwd: dirname(file), agentDir: dirname(file), skillPaths: [file], includeDefaults: false });
+	const skill = skills.find((candidate) => candidate.name === name);
+	if (skill === undefined) return `pi's skill loader finds no skill named ${name} in ${file}`;
+	if (!skill.disableModelInvocation) return `${file} is not marked disable-model-invocation, so /${name} would not expand`;
+	return undefined;
+}
+
 export function readPin(runtime: string): Pin | null {
 	const file = join(runtime, "current", "Pin.json");
 	return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Pin) : null;
 }
 
-export function install(
+export async function install(
 	from: string,
 	runtime: string,
 	throughlineCommit: string | null,
-	options: { runTests?: boolean; imageModule?: string } = {},
-): Pin {
+	options: { runTests?: boolean; imageModule?: string; showMe?: string } = {},
+): Promise<Pin> {
 	const imageModule = options.imageModule ?? SHIPPED_IMAGE_MODULE;
+	const showMe = options.showMe ?? SHIPPED_SHOW_ME;
 	const absent = IMAGE_FILES.filter((name) => !existsSync(join(imageModule, name)));
 	if (absent.length > 0) {
 		throw new Error(
 			`refused: the shipped image module at ${imageModule} lacks ${absent.join(", ")}; current is unchanged.\n` +
 				"An install without it would give every new Pi thread no image tools. Ship subscription-images through Ship Warden, then install again.",
+		);
+	}
+	// The same check the agent runs at start: a copy that loads but exports the wrong things is refused here.
+	const imageProblem = await imageModuleProblem(imageModule);
+	if (imageProblem !== undefined) {
+		throw new Error(
+			`refused: ${imageProblem}; current is unchanged.\n` +
+				"An install with it would give every new Pi thread no image tools. Ship a working subscription-images through Ship Warden, then install again.",
+		);
+	}
+	const showMeProblem = skillProblem(showMe, "show-me");
+	if (showMeProblem !== undefined) {
+		throw new Error(
+			`refused: ${showMeProblem}; current is unchanged.\n` +
+				"An install without it would leave /show-me unexpanded in every new Durable thread. Ship show-me through Ship Warden, then install again.",
 		);
 	}
 	const dirty = git(from, "status", "--porcelain", "--untracked-files=no");
@@ -156,6 +191,8 @@ export function install(
 	if (!existsSync(join(target, ENTRY))) throw new Error(`refused: the copy has no ${ENTRY}`);
 	mkdirSync(join(target, IMAGE_COPY), { recursive: true });
 	for (const name of IMAGE_FILES) execFileSync("cp", [join(imageModule, name), join(target, IMAGE_COPY, name)]);
+	mkdirSync(dirname(join(target, SHOW_ME_COPY)), { recursive: true });
+	execFileSync("cp", [showMe, join(target, SHOW_ME_COPY)]);
 	if (options.runTests) {
 		// The copy's own tests run inside the copy before anything points at it; a fold or rebuild that breaks the
 		// agent program is refused here and live threads keep the version they have.
@@ -210,7 +247,7 @@ function shellValue(file: string, name: string): string | null {
 	return m ? m[1] : null;
 }
 
-export function check(runtime: string, imageModule = SHIPPED_IMAGE_MODULE): CheckResult {
+export function check(runtime: string, imageModule = SHIPPED_IMAGE_MODULE, showMe = SHIPPED_SHOW_ME): CheckResult {
 	const problems: string[] = [];
 	const facts: Record<string, unknown> = {};
 	const expectedEntry = join(runtime, "current", ENTRY);
@@ -232,6 +269,11 @@ export function check(runtime: string, imageModule = SHIPPED_IMAGE_MODULE): Chec
 		const shipped = treeHash(imageModule, IMAGE_FILES.map((name) => join(imageModule, name)));
 		facts.image_module_sha256 = pinned.sha256;
 		if (pinned.sha256 !== shipped.sha256) problems.push("image module pinned older than shipped; the next agent install picks it up");
+		const pinnedShowMe = join(versionDir, SHOW_ME_COPY);
+		if (!existsSync(pinnedShowMe)) problems.push("the install has no pinned show-me skill; /show-me does not expand in Durable threads");
+		else if (existsSync(showMe) && !readFileSync(pinnedShowMe).equals(readFileSync(showMe))) {
+			problems.push("show-me skill pinned older than shipped; the next agent install picks it up");
+		}
 		try {
 			git(pin.pi_fork, "merge-base", "--is-ancestor", pin.pi_commit, "main");
 		} catch {
@@ -281,7 +323,7 @@ function writeService(file: string, result: CheckResult): void {
 	renameSync(tmp, file);
 }
 
-function main(): void {
+async function main(): Promise<void> {
 	const { positionals, values } = parseArgs({
 		allowPositionals: true,
 		options: {
@@ -292,15 +334,17 @@ function main(): void {
 			json: { type: "boolean", default: false },
 			"skip-tests": { type: "boolean", default: false },
 			"image-module": { type: "string", default: SHIPPED_IMAGE_MODULE },
+			"show-me": { type: "string", default: SHIPPED_SHOW_ME },
 		},
 	});
 	const runtime = resolve(values.runtime as string);
 	const verb = positionals[0];
 	try {
 		if (verb === "install") {
-			const pin = install(resolve(values.from as string), runtime, (values["throughline-commit"] as string) ?? null, {
+			const pin = await install(resolve(values.from as string), runtime, (values["throughline-commit"] as string) ?? null, {
 					runTests: !values["skip-tests"],
 					imageModule: resolve(values["image-module"] as string),
+					showMe: resolve(values["show-me"] as string),
 				});
 			console.log(JSON.stringify(pin, null, 2));
 		} else if (verb === "rollback") {
@@ -322,4 +366,4 @@ function main(): void {
 }
 
 // Compared through realpath: the adapter runs this file through the <runtime>/current link, while import.meta.url is resolved.
-if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) main();
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) await main();

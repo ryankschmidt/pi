@@ -28,19 +28,30 @@ function fakeFork(): string {
 	return root;
 }
 
-/** A stand-in for the shipped subscription-images folder. */
+/** A stand-in for the shipped subscription-images folder that exports the contract the image tools need. */
 function fakeImageModule(): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-images-"));
-	writeFileSync(join(dir, "shared.mjs"), "export const imageToolDescriptions = {};\n");
+	writeFileSync(
+		join(dir, "shared.mjs"),
+		'export const imageToolDescriptions = { inspect_image: "Look at an image" };\nexport const imageToolParameters = { inspect_image: { type: "object", properties: {} } };\n',
+	);
 	writeFileSync(join(dir, "effects.mjs"), "export const runImageTool = () => undefined;\n");
 	return dir;
 }
 
-test("install copies the program read-only and pins it; check sees an edit; rollback returns to the previous copy", () => {
+/** A stand-in for the shipped show-me.md: a command-only skill named show-me. */
+function fakeShowMe(body = "Show it."): string {
+	const file = join(mkdtempSync(join(tmpdir(), "pi-show-me-")), "show-me.md");
+	writeFileSync(file, `---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\n---\n${body}\n`);
+	return file;
+}
+
+test("install copies the program read-only and pins it; check sees an edit; rollback returns to the previous copy", async () => {
 	const fork = fakeFork();
 	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-"));
 	const imageModule = fakeImageModule();
-	const first = install(fork, runtime, null, { imageModule });
+	const showMe = fakeShowMe();
+	const first = await install(fork, runtime, null, { imageModule, showMe });
 	assert.equal(readlinkSync(join(runtime, "current")), join("versions", first.id));
 	const entry = join(runtime, "versions", first.id, "throughline/durable-agent/src/main.ts");
 	assert.equal(statSync(entry).mode & 0o222, 0, "the installed entry is read-only");
@@ -48,41 +59,70 @@ test("install copies the program read-only and pins it; check sees an edit; roll
 
 	// An edit in the fork after install does not reach the installed copy.
 	writeFileSync(join(fork, "throughline/durable-agent/src/main.ts"), 'console.log("edited");\n');
-	const facts = check(runtime, imageModule);
+	const facts = check(runtime, imageModule, showMe);
 	assert.ok(!facts.problems.some((p) => p.includes("changed after install")), facts.problems.join("; "));
 
 	// An edit to the installed copy itself is caught.
 	chmodSync(entry, 0o644);
 	writeFileSync(entry, 'console.log("tampered");\n');
-	const tampered = check(runtime, imageModule);
+	const tampered = check(runtime, imageModule, showMe);
 	assert.ok(tampered.problems.some((p) => p.includes("changed after install")));
 	assert.ok(tampered.problems.some((p) => p.includes("writable again")));
 
 	// A dirty fork is refused; a second clean install records the first as previous; rollback returns to it.
-	assert.throws(() => install(fork, runtime, null, { imageModule }), /uncommitted changes/);
+	await assert.rejects(install(fork, runtime, null, { imageModule, showMe }), /uncommitted changes/);
 	execFileSync("git", ["-C", fork, "checkout", "--", "."]);
-	const second = install(fork, runtime, null, { imageModule });
+	const second = await install(fork, runtime, null, { imageModule, showMe });
 	assert.equal(second.previous, first.id);
 	assert.equal(rollback(runtime).id, first.id);
 	assert.equal(readPin(runtime)?.id, first.id);
 });
 
-test("the image module is pinned inside the install: missing refuses, present is read-only, a newer ship is reported", () => {
+test("the image module is pinned inside the install: missing or incompatible refuses, present is read-only, a newer ship is reported", async () => {
 	const fork = fakeFork();
 	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-"));
+	const showMe = fakeShowMe();
 	const missing = mkdtempSync(join(tmpdir(), "pi-images-missing-"));
-	assert.throws(() => install(fork, runtime, null, { imageModule: missing }), /lacks shared\.mjs, effects\.mjs; current is unchanged/);
+	await assert.rejects(install(fork, runtime, null, { imageModule: missing, showMe }), /lacks shared\.mjs, effects\.mjs; current is unchanged/);
+	assert.equal(existsSync(join(runtime, "current")), false);
+	// Both files present and loadable, exporting the wrong names: refused before current moves.
+	const wrong = mkdtempSync(join(tmpdir(), "pi-images-wrong-"));
+	writeFileSync(join(wrong, "shared.mjs"), "export const unrelated = 1;\n");
+	writeFileSync(join(wrong, "effects.mjs"), "export const alsoUnrelated = 2;\n");
+	await assert.rejects(install(fork, runtime, null, { imageModule: wrong, showMe }), /imageToolDescriptions is not an object\); current is unchanged/);
 	assert.equal(existsSync(join(runtime, "current")), false);
 
 	const imageModule = fakeImageModule();
-	const pin = install(fork, runtime, null, { imageModule });
+	const pin = await install(fork, runtime, null, { imageModule, showMe });
 	const copy = join(runtime, "versions", pin.id, "throughline/durable-agent/capabilities/subscription-images/effects.mjs");
 	assert.equal(statSync(copy).mode & 0o222, 0, "the pinned image module is read-only");
-	assert.ok(!check(runtime, imageModule).problems.some((p) => p.includes("image module")));
+	assert.ok(!check(runtime, imageModule, showMe).problems.some((p) => p.includes("image module")));
 
 	writeFileSync(join(imageModule, "effects.mjs"), "export const runImageTool = () => 'newer';\n");
-	assert.ok(check(runtime, imageModule).problems.includes("image module pinned older than shipped; the next agent install picks it up"));
-	assert.ok(!check(runtime, imageModule).problems.some((p) => p.includes("changed after install")), "the pin itself is unchanged");
+	assert.ok(check(runtime, imageModule, showMe).problems.includes("image module pinned older than shipped; the next agent install picks it up"));
+	assert.ok(!check(runtime, imageModule, showMe).problems.some((p) => p.includes("changed after install")), "the pin itself is unchanged");
+});
+
+test("the show-me skill is pinned inside the install: missing or model-callable refuses, a newer ship is reported", async () => {
+	const fork = fakeFork();
+	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-"));
+	const imageModule = fakeImageModule();
+	await assert.rejects(
+		install(fork, runtime, null, { imageModule, showMe: join(tmpdir(), "no-such-show-me.md") }),
+		/show-me skill is missing at .*; current is unchanged/,
+	);
+	const modelCallable = fakeShowMe();
+	writeFileSync(modelCallable, "---\nname: show-me\ndescription: Show the work.\n---\nShow it.\n");
+	await assert.rejects(install(fork, runtime, null, { imageModule, showMe: modelCallable }), /not marked disable-model-invocation/);
+	assert.equal(existsSync(join(runtime, "current")), false);
+
+	const showMe = fakeShowMe();
+	const pin = await install(fork, runtime, null, { imageModule, showMe });
+	const copy = join(runtime, "versions", pin.id, "throughline/durable-agent/capabilities/skills/show-me/SKILL.md");
+	assert.equal(statSync(copy).mode & 0o222, 0, "the pinned skill is read-only");
+	assert.ok(!check(runtime, imageModule, showMe).problems.some((p) => p.includes("show-me")));
+	writeFileSync(showMe, "---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\n---\nShow it better.\n");
+	assert.ok(check(runtime, imageModule, showMe).problems.includes("show-me skill pinned older than shipped; the next agent install picks it up"));
 });
 
 test("check run through a link (as the Health Hub adapter runs it) reports a missing install and exits 1", () => {

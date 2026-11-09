@@ -20,6 +20,7 @@ import {
 	type SubmissionDraft,
 	type SubmissionId,
 	type TaskId,
+	type UserInput,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { carrySession } from "./carry.ts";
@@ -92,6 +93,11 @@ export type ProgramOptions = {
 	reap?: boolean;
 	/** Called once the program has stopped, with its exit code. */
 	onExit?: (code: number) => void;
+	/**
+	 * Rewrites a submitted input before it is stored, given the conversation's working folder; the stored user message
+	 * is what this returns, so every later request replays it unchanged (skill commands, see skill-commands.ts).
+	 */
+	admitInput?: (content: UserInput, cwd: string | undefined) => UserInput;
 };
 
 export const EXIT = { ok: 0, failed: 1, alreadyOwned: 3, protocol: 4 } as const;
@@ -214,7 +220,9 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 							? { type: "continue", requestId: params.requestId }
 							: {
 									type: "input",
-									content: params.content,
+									content: options.admitInput
+										? options.admitInput(params.content as UserInput, (await conversation.agent(context)).cwd)
+										: params.content,
 									requestId: params.requestId,
 									...(params.whenBusy === undefined ? {} : { whenBusy: params.whenBusy }),
 									...(params.whenIdle === undefined ? {} : { whenIdle: params.whenIdle }),

@@ -1,41 +1,23 @@
 // Explicit skill commands in a Durable agent: a user message starting `/skill:<name>`, or `/<name>` for a skill marked
-// `disable-model-invocation: true`, reaches the model as stock pi's skill block followed by the arguments. ThroughLine's
+// `disable-model-invocation: true`, is submitted as stock pi's skill block followed by the arguments. ThroughLine's
 // composer menu for Pi threads offers these commands, so what it offers is what expands. `/show-me` works because
 // show-me is such a skill, not because the program carries show-me code.
+//
+// The expansion happens once, when the input is submitted, and the stored user message is the expanded text, as stock
+// pi stores it. A retry, a restart, a resumed request or a fork therefore sends the instructions the turn was given,
+// even after the skill file changes or goes away.
 
 import { readFileSync } from "node:fs";
-import type { Message } from "@earendil-works/pi-ai";
 import { type Skill, stripFrontmatter } from "@earendil-works/pi-coding-agent";
-import { defineExtension, GenerationTask, hook } from "@earendil-works/pi-durable";
-import type { AgentResources } from "./setup.ts";
+import type { UserInput } from "@earendil-works/pi-durable";
 
-/** The skill-commands extension over the skills the prompt already lists for the conversation's folder. */
-export function createSkillCommandsExtension(resources: AgentResources) {
-	return defineExtension({
-		name: "skill-commands",
-		hooks: [
-			hook(GenerationTask, {
-				// The stored user message stays as typed; each request carries the expansion, read from the skill file then.
-				beforeRequest: (request, api) => {
-					const skills = resources.folder(resources.cwdOfConversation(api.conversationId)).skills;
-					const messages = request.messages.map((message) => expandMessage(message, skills));
-					return messages.some((message, index) => message !== request.messages[index]) ? { messages } : undefined;
-				},
-			}),
-		],
-	});
-}
-
-function expandMessage(message: Message, skills: readonly Skill[]): Message {
-	if (message.role !== "user") return message;
-	if (typeof message.content === "string") {
-		const text = expandSkillCommand(message.content, skills);
-		return text === message.content ? message : { ...message, content: text };
-	}
-	const [first, ...rest] = message.content;
-	if (first?.type !== "text") return message;
+/** A submitted input with a leading skill command expanded; anything else is returned as given. */
+export function expandSkillInput(content: UserInput, skills: readonly Skill[]): UserInput {
+	if (typeof content === "string") return expandSkillCommand(content, skills);
+	const [first, ...rest] = content;
+	if (first?.type !== "text") return content;
 	const text = expandSkillCommand(first.text, skills);
-	return text === first.text ? message : { ...message, content: [{ ...first, text }, ...rest] };
+	return text === first.text ? content : [{ ...first, text }, ...rest];
 }
 
 /** Stock pi's `/skill:` expansion; an unknown name or an unreadable file leaves the text as typed. */
