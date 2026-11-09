@@ -13,9 +13,10 @@ import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { createClaudeStandardPromptExtension } from "./claude-standard-prompt.ts";
+import { configureHttp } from "./http.ts";
+import { loadImageTools, READ_ONLY_IMAGE_TOOLS } from "./image-tools.ts";
 import { runProgram } from "./program.ts";
 import {
-	configureHttp,
 	createAgentRegistry,
 	ExecutionEnvs,
 	harnessSettings,
@@ -56,20 +57,23 @@ const settings = SettingsManager.create(cwd);
 configureHttp(settings);
 const models = await ModelRuntime.create();
 const envs = new ExecutionEnvs(cwd);
-const initial = await initialModel(settings, models, values.model);
+const initial = initialModel(settings, models, values.model);
 const approvals = new Approvals();
 if (values["runtime-mode"]) approvals.mode = values["runtime-mode"] as RuntimeMode;
 const toolLink = new ToolLink();
 const descriptors: ToolDescriptor[] = values.tools ? JSON.parse(readFileSync(resolve(values.tools), "utf8")) : [];
 const tools = createThroughLineToolsExtension(descriptors, toolLink);
+const images = await loadImageTools(cwd);
+if (images.missing !== undefined) log(images.missing);
 const registry = createAgentRegistry(settings, cwd, {
 	// Claude Code's standard prompt renders before every other section.
 	first: [createClaudeStandardPromptExtension((provider, modelId) => models.getModel(provider, modelId)?.api)],
 	after: [
 		createToolSearchExtension(),
+		images.extension,
 		tools.extension,
 		createOrchestrationExtension(process.env),
-		createApprovalsExtension(approvals, tools.readOnly),
+		createApprovalsExtension(approvals, new Set([...tools.readOnly, ...READ_ONLY_IMAGE_TOOLS])),
 	],
 });
 const code = await runProgram({

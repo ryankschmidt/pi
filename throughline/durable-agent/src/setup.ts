@@ -1,12 +1,26 @@
-// The coding agent's parts the program reuses as libraries: its model runtime and logins, settings, skills, project
-// context files and system prompt sections. Pi 1.1's own durable program used the same parts the same way.
-// The coding agent's session loop, agent core, JSONL session files, RPC mode and extension bus are not used.
+// The coding agent's parts the program reuses as libraries, through its public package entry only: model runtime and
+// logins, settings, skills and project context files. The system prompt is the program's own: it describes this
+// program and Durable's own tools, not interactive pi. The coding agent's session loop, agent core, JSONL session
+// files, RPC mode and extension bus are not used.
 
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
+	formatSkillsForPrompt,
+	getAgentDir,
+	loadProjectContextFiles,
+	loadSkills,
+	ModelRuntime,
+	resolveCliModel,
+	SettingsManager,
+	type Skill,
+} from "@earendil-works/pi-coding-agent";
+import {
 	createRegistry,
 	defineExtension,
+	type ConversationId,
 	type EnvTarget,
 	type Extension,
 	type HarnessSettings,
@@ -17,26 +31,9 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { getAgentDir } from "../../../packages/coding-agent/dist/config.js";
-import { applyHttpProxySettings, configureHttpDispatcher } from "../../../packages/coding-agent/dist/core/http-dispatcher.js";
-import { findInitialModel, resolveCliModel } from "../../../packages/coding-agent/dist/core/model-resolver.js";
-import { ModelRuntime } from "../../../packages/coding-agent/dist/core/model-runtime.js";
-import { loadProjectContextFiles } from "../../../packages/coding-agent/dist/core/resource-loader.js";
-import { SettingsManager } from "../../../packages/coding-agent/dist/core/settings-manager.js";
-import { loadSkills, type Skill } from "../../../packages/coding-agent/dist/core/skills.js";
-import { buildSystemPromptSections } from "../../../packages/coding-agent/dist/core/system-prompt.js";
-import { bashToolSystemPromptContribution } from "../../../packages/coding-agent/dist/core/tools/bash.js";
-import { editToolSystemPromptContribution } from "../../../packages/coding-agent/dist/core/tools/edit.js";
-import { readToolSystemPromptContribution } from "../../../packages/coding-agent/dist/core/tools/read.js";
-import { writeToolSystemPromptContribution } from "../../../packages/coding-agent/dist/core/tools/write.js";
+import { createSkillCommandsExtension } from "./skill-commands.ts";
 
 export { ModelRuntime, SettingsManager };
-
-/** pi's HTTP setup: proxy, idle timeouts, and one undici for fetch. Without it, some provider streams break off. */
-export function configureHttp(settings: SettingsManager): void {
-	applyHttpProxySettings(settings.getGlobalSettings().httpProxy);
-	configureHttpDispatcher(settings.getHttpIdleTimeoutMs());
-}
 
 /**
  * Harness settings read at every use from pi's settings. Automatic compaction stays off (the factory design keeps
@@ -66,58 +63,118 @@ export function harnessSettings(settings: SettingsManager): HarnessSettings {
 	};
 }
 
-const CONTRIBUTIONS = {
-	read: readToolSystemPromptContribution,
-	bash: bashToolSystemPromptContribution,
-	edit: editToolSystemPromptContribution,
-	write: writeToolSystemPromptContribution,
-} as const;
-
-/** pi's section order; `buildSystemPromptSections()` omits the ones without content. */
-const KEYS = ["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"] as const;
-const PI_PROMPT_NAME = "pi-prompt";
+/** What the prompt and the skill commands read for one working folder: its context files and skills. */
+export type FolderResources = { contextFiles: { path: string; content: string }[]; skills: Skill[] };
 
 /**
- * pi's system prompt as one Durable extension: the sections of `buildSystemPromptSections()` for the request's tools
- * and the conversation's directory. Context files and skills load once per directory, as pi does at startup.
+ * Pi's resources for the program: the global APPEND_SYSTEM.md, read once, and each folder's context files and skills,
+ * loaded once per folder as pi does at startup. The prompt and the skill commands share one copy.
  */
-export function createPiPrompt(settings: SettingsManager, fallbackCwd: string) {
-	const resources = new Map<string, { contextFiles: { path: string; content: string }[]; skills: Skill[] }>();
-	const load = (cwd: string) => {
-		let found = resources.get(cwd);
+export class AgentResources {
+	readonly #settings: SettingsManager;
+	readonly #fallbackCwd: string;
+	readonly #folders = new Map<string, FolderResources>();
+	readonly #cwdByConversation = new Map<ConversationId, string>();
+	#append: string | undefined | null = null;
+
+	constructor(settings: SettingsManager, fallbackCwd: string) {
+		this.#settings = settings;
+		this.#fallbackCwd = fallbackCwd;
+	}
+
+	/** The folder of a request's prompt input; remembered for the conversation so its skill commands match. */
+	cwdOf(input: PromptInput): string {
+		const cwd = input.env?.cwd ?? input.agent.cwd ?? this.#fallbackCwd;
+		this.#cwdByConversation.set(input.conversationId, cwd);
+		return cwd;
+	}
+
+	/** The folder a conversation's prompt was last built for; the program's folder before its first prompt here. */
+	cwdOfConversation(conversationId: ConversationId): string {
+		return this.#cwdByConversation.get(conversationId) ?? this.#fallbackCwd;
+	}
+
+	folder(cwd: string): FolderResources {
+		let found = this.#folders.get(cwd);
 		if (found === undefined) {
 			const agentDir = getAgentDir();
 			found = {
 				contextFiles: loadProjectContextFiles({ cwd, agentDir }),
-				skills: loadSkills({ cwd, agentDir, skillPaths: settings.getSkillPaths(), includeDefaults: true }).skills,
+				skills: loadSkills({ cwd, agentDir, skillPaths: this.#settings.getSkillPaths(), includeDefaults: true }).skills,
 			};
-			resources.set(cwd, found);
+			this.#folders.set(cwd, found);
 		}
 		return found;
-	};
-	const built = new WeakMap<PromptInput, Record<string, string>>();
-	const build = (input: PromptInput): Record<string, string> => {
-		let sections = built.get(input);
-		if (sections === undefined) {
-			const cwd = input.env?.cwd ?? input.agent.cwd ?? fallbackCwd;
-			const selectedTools = input.agent.tools.map((tool) => tool.name);
-			const toolSnippets: Record<string, string> = {};
-			const toolGuidelines: Record<string, string[]> = {};
-			for (const name of selectedTools) {
-				const contribution = CONTRIBUTIONS[name as keyof typeof CONTRIBUTIONS];
-				if (contribution === undefined) continue;
-				toolSnippets[name] = contribution.snippet;
-				toolGuidelines[name] = [...contribution.guidelines];
-			}
-			sections = buildSystemPromptSections({ cwd, selectedTools, toolSnippets, toolGuidelines, ...load(cwd) });
-			built.set(input, sections);
+	}
+
+	/**
+	 * The global `APPEND_SYSTEM.md` in pi's agent folder, or undefined. A project's own APPEND_SYSTEM.md is not read:
+	 * stock pi reads it only for projects the user trusted, and the program has no trust prompt.
+	 */
+	append(): string | undefined {
+		if (this.#append === null) {
+			const file = join(getAgentDir(), "APPEND_SYSTEM.md");
+			const text = existsSync(file) ? readFileSync(file, "utf8").trim() : "";
+			this.#append = text.length > 0 ? text : undefined;
 		}
-		return sections;
-	};
+		return this.#append;
+	}
+}
+
+// Durable's own coding tools (`CodingTools`), described in this program's words; their schemas are Durable's
+// (for example edit takes `edits[].oldText`).
+const TOOL_LINES: Record<string, { line: string; rules: string[] }> = {
+	read: { line: "Read file contents", rules: ["Use read to examine files instead of cat or sed."] },
+	bash: { line: "Execute bash commands (ls, grep, find, etc.)", rules: [] },
+	edit: {
+		line: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
+		rules: [
+			"Use edit for targeted changes. Batch changes to one file in a single call.",
+			"Each edits[].oldText must exactly and uniquely match the original file. Keep matches short and non-overlapping; merge nearby changes without including large unchanged regions.",
+		],
+	},
+	write: { line: "Create or overwrite files", rules: ["Use write only for new files or complete rewrites."] },
+};
+const PREAMBLE =
+	"You are a coding agent run by ThroughLine's Pi Durable agent program. Help users inspect files, run commands, and modify code.";
+const PI_PROMPT_NAME = "pi-prompt";
+
+/** The program's system prompt as one Durable extension: preamble, tools, rules, addendum, context, skills, folder. */
+export function createPiPrompt(resources: AgentResources) {
+	const ownTools = (input: PromptInput) => input.agent.tools.map((tool) => tool.name).filter((name) => name in TOOL_LINES);
 	return defineExtension({
 		name: PI_PROMPT_NAME,
-		// The built sections carry their own tags.
-		sections: KEYS.map((key) => section(key, (input) => build(input)[key], { tag: false })),
+		sections: [
+			section("preamble", () => PREAMBLE, { tag: false }),
+			section("tools", (input) => {
+				const lines = ownTools(input).map((name) => `- ${name}: ${TOOL_LINES[name]?.line}`);
+				return `${lines.length > 0 ? lines.join("\n") : "(none)"}\n\nAdditional tools may be available.`;
+			}),
+			section("rules", (input) => {
+				const names = ownTools(input);
+				const rules = [
+					...(names.includes("bash") ? ["Use bash for file operations like ls, rg, find"] : []),
+					...names.flatMap((name) => TOOL_LINES[name]?.rules ?? []),
+					"Be concise in your responses",
+					"Show file paths clearly when working with files",
+				];
+				return rules.map((rule) => `- ${rule}`).join("\n");
+			}),
+			section("addendum", () => resources.append()),
+			section("project_context", (input) => {
+				const files = resources.folder(resources.cwdOf(input)).contextFiles;
+				if (files.length === 0) return undefined;
+				return [
+					"Project-specific instructions and guidelines:",
+					...files.map(({ path, content }) => `<project_instructions path="${path}">\n${content}\n</project_instructions>`),
+				].join("\n\n");
+			}),
+			section("skills", (input) => {
+				const text = formatSkillsForPrompt(resources.folder(resources.cwdOf(input)).skills, "read").trim();
+				return text.length > 0 ? text : undefined;
+			}),
+			section("cwd", (input) => resources.cwdOf(input).replace(/\\/g, "/")),
+		],
 	});
 }
 
@@ -130,10 +187,12 @@ export function createAgentRegistry(
 	cwd: string,
 	extra: { first?: readonly Extension[]; after?: readonly Extension[] } = {},
 ): Registry {
+	const resources = new AgentResources(settings, cwd);
 	const registry = createRegistry();
 	for (const extension of extra.first ?? []) registry.install(extension);
 	registry.install(CodingTools);
-	registry.install(createPiPrompt(settings, cwd));
+	registry.install(createPiPrompt(resources));
+	registry.install(createSkillCommandsExtension(resources));
 	for (const extension of extra.after ?? []) registry.install(extension);
 	return registry;
 }
@@ -163,33 +222,28 @@ export class ExecutionEnvs {
 	}
 }
 
-/** The model a new root conversation starts with: an explicit `provider/model`, or pi's default resolution. */
-export async function initialModel(
+/**
+ * The model a new root conversation starts with: an explicit `provider/model`, else pi's default provider and model.
+ * With neither, or a default that does not resolve, it starts with no model and ThroughLine's first configure sets
+ * one; it never picks another model that happens to have a login.
+ */
+export function initialModel(
 	settings: SettingsManager,
 	models: ModelRuntime,
 	cli: string | undefined,
-): Promise<{ model?: ModelRef; thinkingLevel?: ModelThinkingLevel }> {
-	if (cli !== undefined) {
-		const resolved = resolveCliModel({ cliModel: cli, modelRuntime: models });
-		if (resolved.error !== undefined || resolved.model === undefined) {
-			throw new Error(`MODEL_NOT_RESOLVED: ${resolved.error ?? cli}`);
-		}
-		// A model named without a level takes pi's default thinking level, as the coding agent does.
-		const thinkingLevel = resolved.thinkingLevel ?? settings.getDefaultThinkingLevel();
-		return {
-			model: { provider: resolved.model.provider, modelId: resolved.model.id },
-			...(thinkingLevel === undefined ? {} : { thinkingLevel }),
-		};
+): { model?: ModelRef; thinkingLevel?: ModelThinkingLevel } {
+	const resolved =
+		cli !== undefined
+			? resolveCliModel({ cliModel: cli, modelRuntime: models })
+			: resolveCliModel({ cliProvider: settings.getDefaultProvider(), cliModel: settings.getDefaultModel(), modelRuntime: models });
+	if (resolved.error !== undefined || resolved.model === undefined) {
+		if (cli !== undefined) throw new Error(`MODEL_NOT_RESOLVED: ${resolved.error ?? cli}`);
+		return {};
 	}
-	const found = await findInitialModel({
-		scopedModels: [],
-		isContinuing: false,
-		defaultProvider: settings.getDefaultProvider(),
-		defaultModelId: settings.getDefaultModel(),
-		defaultThinkingLevel: settings.getDefaultThinkingLevel(),
-		modelRuntime: models,
-	});
-	return found.model === undefined
-		? {}
-		: { model: { provider: found.model.provider, modelId: found.model.id }, thinkingLevel: found.thinkingLevel };
+	// A model named without a level takes pi's default thinking level, as the coding agent does.
+	const thinkingLevel = resolved.thinkingLevel ?? settings.getDefaultThinkingLevel();
+	return {
+		model: { provider: resolved.model.provider, modelId: resolved.model.id },
+		...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+	};
 }

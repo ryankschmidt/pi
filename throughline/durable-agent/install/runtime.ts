@@ -5,10 +5,11 @@
 // Live ThroughLine Pi threads start `ryan-pi agent`, which runs the agent program's main.ts. Running it from the
 // Pi fork's working tree meant any edit, branch switch, rebuild or upstream fold there changed every live thread at
 // its next start. This program copies what the agent program needs (its own folder, the workspace packages' built
-// dist, node_modules) into <runtime>/versions/<id>/, makes it read-only, pins its hash, and points
-// <runtime>/current at it. The launcher's agent path is <runtime>/current/throughline/durable-agent/src/main.ts.
+// dist, node_modules, and the shipped subscription-images module the image tools run) into <runtime>/versions/<id>/,
+// makes it read-only, pins its hash, and points <runtime>/current at it. The launcher's agent path is <runtime>/current/throughline/durable-agent/src/main.ts.
 //
 //   node install/runtime.ts install  [--from <pi fork root>] [--runtime <dir>] [--throughline-commit <sha>] [--skip-tests]
+//                                    [--image-module <shipped subscription-images folder>]
 //   node install/runtime.ts rollback [--runtime <dir>]
 //   node install/runtime.ts check    [--runtime <dir>] [--service <health hub service json>] [--json]
 //
@@ -47,14 +48,18 @@ const STATIC_CONFIG = join(HOME, ".local/state/ryan/fccl/static-shim-config.sh")
 const LAUNCHER = join(HOME, ".local/bin/ryan-pi");
 // Strings that exist only in ThroughLine's Pi Durable client (apps/server/src/throughline/pi/durable/).
 const DURABLE_CLIENT_MARKERS = ["Pi Durable agent program exited", "routePiAdapter"];
+/** The shipped image module (Ship Warden's Tier 2 copy); each install pins the two files the image tools import. */
+export const SHIPPED_IMAGE_MODULE = join(HOME, "core-root/src/tools/subscription-images");
+const IMAGE_COPY = "throughline/durable-agent/capabilities/subscription-images";
+const IMAGE_FILES = ["shared.mjs", "effects.mjs"];
 
 /** What the copy holds: the top-level paths taken from the Pi fork root. */
 const COPIED = ["package.json", "node_modules", "packages", "throughline/durable-agent"];
 /** The agent program's own tests, run inside a new copy before it is switched in. */
-const AGENT_TESTS = ["test/program.test.ts", "test/carry.test.ts", "test/reaper.test.ts"];
+const AGENT_TESTS = ["test/program.test.ts", "test/carry.test.ts", "test/reaper.test.ts", "test/agent.test.ts"];
 /** The program hash covers the code that runs: the agent program and every workspace package's dist. */
 function programRoots(root: string): string[] {
-	const roots = [join(root, "throughline/durable-agent/src"), join(root, "throughline/durable-agent/package.json")];
+	const roots = [join(root, "throughline/durable-agent/src"), join(root, "throughline/durable-agent/package.json"), join(root, IMAGE_COPY)];
 	for (const name of readdirSync(join(root, "packages")).sort()) {
 		const dist = join(root, "packages", name, "dist");
 		if (existsSync(dist)) roots.push(dist, join(root, "packages", name, "package.json"));
@@ -116,7 +121,20 @@ export function readPin(runtime: string): Pin | null {
 	return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Pin) : null;
 }
 
-export function install(from: string, runtime: string, throughlineCommit: string | null, options: { runTests?: boolean } = {}): Pin {
+export function install(
+	from: string,
+	runtime: string,
+	throughlineCommit: string | null,
+	options: { runTests?: boolean; imageModule?: string } = {},
+): Pin {
+	const imageModule = options.imageModule ?? SHIPPED_IMAGE_MODULE;
+	const absent = IMAGE_FILES.filter((name) => !existsSync(join(imageModule, name)));
+	if (absent.length > 0) {
+		throw new Error(
+			`refused: the shipped image module at ${imageModule} lacks ${absent.join(", ")}; current is unchanged.\n` +
+				"An install without it would give every new Pi thread no image tools. Ship subscription-images through Ship Warden, then install again.",
+		);
+	}
 	const dirty = git(from, "status", "--porcelain", "--untracked-files=no");
 	if (dirty) {
 		throw new Error(
@@ -136,6 +154,8 @@ export function install(from: string, runtime: string, throughlineCommit: string
 		execFileSync("cp", ["-cR", join(from, path), join(target, dirname(path) === "." ? "" : dirname(path))]);
 	}
 	if (!existsSync(join(target, ENTRY))) throw new Error(`refused: the copy has no ${ENTRY}`);
+	mkdirSync(join(target, IMAGE_COPY), { recursive: true });
+	for (const name of IMAGE_FILES) execFileSync("cp", [join(imageModule, name), join(target, IMAGE_COPY, name)]);
 	if (options.runTests) {
 		// The copy's own tests run inside the copy before anything points at it; a fold or rebuild that breaks the
 		// agent program is refused here and live threads keep the version they have.
@@ -190,7 +210,7 @@ function shellValue(file: string, name: string): string | null {
 	return m ? m[1] : null;
 }
 
-export function check(runtime: string): CheckResult {
+export function check(runtime: string, imageModule = SHIPPED_IMAGE_MODULE): CheckResult {
 	const problems: string[] = [];
 	const facts: Record<string, unknown> = {};
 	const expectedEntry = join(runtime, "current", ENTRY);
@@ -207,6 +227,11 @@ export function check(runtime: string): CheckResult {
 			problems.push(`the installed agent program changed after install (hash ${program.sha256.slice(0, 12)}, pinned ${pin.program_sha256.slice(0, 12)})`);
 		}
 		if (statSync(join(versionDir, ENTRY)).mode & 0o222) problems.push("the installed agent program is writable again");
+		// A newer ship of subscription-images reaches threads only through the next install; say when one is waiting.
+		const pinned = treeHash(join(versionDir, IMAGE_COPY), IMAGE_FILES.map((name) => join(versionDir, IMAGE_COPY, name)));
+		const shipped = treeHash(imageModule, IMAGE_FILES.map((name) => join(imageModule, name)));
+		facts.image_module_sha256 = pinned.sha256;
+		if (pinned.sha256 !== shipped.sha256) problems.push("image module pinned older than shipped; the next agent install picks it up");
 		try {
 			git(pin.pi_fork, "merge-base", "--is-ancestor", pin.pi_commit, "main");
 		} catch {
@@ -266,13 +291,17 @@ function main(): void {
 			service: { type: "string" },
 			json: { type: "boolean", default: false },
 			"skip-tests": { type: "boolean", default: false },
+			"image-module": { type: "string", default: SHIPPED_IMAGE_MODULE },
 		},
 	});
 	const runtime = resolve(values.runtime as string);
 	const verb = positionals[0];
 	try {
 		if (verb === "install") {
-			const pin = install(resolve(values.from as string), runtime, (values["throughline-commit"] as string) ?? null, { runTests: !values["skip-tests"] });
+			const pin = install(resolve(values.from as string), runtime, (values["throughline-commit"] as string) ?? null, {
+					runTests: !values["skip-tests"],
+					imageModule: resolve(values["image-module"] as string),
+				});
 			console.log(JSON.stringify(pin, null, 2));
 		} else if (verb === "rollback") {
 			console.log(JSON.stringify(rollback(runtime), null, 2));
