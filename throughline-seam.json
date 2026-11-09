@@ -5,7 +5,7 @@
     "sha": "f9a26365568127461c47a07a37dcb42c140a3ac5"
   },
   "fork": {
-    "sha": "de71e97c9bced68d48987e166bb50c0400650d79"
+    "sha": "b004324b7ff3211a279184ffde41cf80962f06d2"
   },
   "merge_base": "f9a26365568127461c47a07a37dcb42c140a3ac5",
   "counts": {
@@ -79,7 +79,7 @@
     {
       "path": "throughline-seam.json",
       "class": "fork-namespace",
-      "reason": "44fd8f06f69ed4d035f6e2ecbbef46a6b9ab2be5 seam: record the Durable agent prompt, skill commands and image tools\n0cc408eb34bae6b88d8aebc66bb7fe0d0eeec5ff fix: align design gate seam ledger with the fork\nb28e2380d6c64142d47516143151d4a3affa5c4a feat: guard Durable design choices and package boundaries\nc84486387d86a986450531b8c8f577d96ce4a5a1 revert: remove extension bridge from Pi fork main\n26e5547d1aa1456ba5f85397631b4558b73c7e41 seam: record the Pi Durable extension bridge and tests\n93b7880f87dd213d174601c855aff5b9eb0881a5 seam: cover the commit-msg hook\nf88556b0a0da13867a406785150c6572a6a051e6 namespace: commit-msg hook runs the Dan card gate\ne8738cb32643140f69c0955a3f962c1ef733b4a5 seam: cover the guard link fix\n9c102e37d1a25078d8eac2a0198947c2736d68f9 seam: cover the test-before-switch and node checks\naa00e512c3237ea5d0e9700e5e853ad49c7fedc7 seam: cover the guard exit-code change\ncb1f5193581a4a88e287c9ac4557188a70d691af seam: cover the runtime installer for the Durable agent program\n2555b4574d9dd55f0acc5d10ee37f5df44857691 seam: cover the carry files in the Durable agent program\n8c1cbfb0913da3e52e99ad8531d405a828fdd6f2 seam: cover the tool-link change in the Durable agent program\nddbe159d22b677c8520c80c2fb7c1590e0a0146b seam: cover the build 2 agent program files\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\nd82a2db77979543cfdf64c2affa4287dbf920821 seam: ledger and exact-path coverage for the Pi Durable agent program\n0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths\n34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)\nffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage\na7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces\n8360421492bba5ca62c3edd7ed5c148b1095e4bd seam: declare exact product coverage and regenerate twelve-path ledger\n37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
+      "reason": "3fe0424a637bb59a6f2fc5cf554a20b8038d5269 seam: record the Durable agent fix round (stored skill expansion, pinned show-me, guarded image tools)\n44fd8f06f69ed4d035f6e2ecbbef46a6b9ab2be5 seam: record the Durable agent prompt, skill commands and image tools\n0cc408eb34bae6b88d8aebc66bb7fe0d0eeec5ff fix: align design gate seam ledger with the fork\nb28e2380d6c64142d47516143151d4a3affa5c4a feat: guard Durable design choices and package boundaries\nc84486387d86a986450531b8c8f577d96ce4a5a1 revert: remove extension bridge from Pi fork main\n26e5547d1aa1456ba5f85397631b4558b73c7e41 seam: record the Pi Durable extension bridge and tests\n93b7880f87dd213d174601c855aff5b9eb0881a5 seam: cover the commit-msg hook\nf88556b0a0da13867a406785150c6572a6a051e6 namespace: commit-msg hook runs the Dan card gate\ne8738cb32643140f69c0955a3f962c1ef733b4a5 seam: cover the guard link fix\n9c102e37d1a25078d8eac2a0198947c2736d68f9 seam: cover the test-before-switch and node checks\naa00e512c3237ea5d0e9700e5e853ad49c7fedc7 seam: cover the guard exit-code change\ncb1f5193581a4a88e287c9ac4557188a70d691af seam: cover the runtime installer for the Durable agent program\n2555b4574d9dd55f0acc5d10ee37f5df44857691 seam: cover the carry files in the Durable agent program\n8c1cbfb0913da3e52e99ad8531d405a828fdd6f2 seam: cover the tool-link change in the Durable agent program\nddbe159d22b677c8520c80c2fb7c1590e0a0146b seam: cover the build 2 agent program files\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\nd82a2db77979543cfdf64c2affa4287dbf920821 seam: ledger and exact-path coverage for the Pi Durable agent program\n0ebc9dce366f08bdbf4f16ead5589a07eb4c34e2 seam: regenerate the ledger at upstream v1.5.0 and cover the Oct 29 paths\n34471f6ca4772565db0c225340eb3a95300b503b fold: merge upstream v1.5.0 (f9a26365568127461c47a07a37dcb42c140a3ac5)\nffa290abeff17e5aab57cee86cc85db899cd0ea9 seam: record the relocated lab and exact coverage\na7ab9d72e6a1c5a7aa9d633d25de2544e72eff0e fix: isolate durable lab from stock workspaces\n8360421492bba5ca62c3edd7ed5c148b1095e4bd seam: declare exact product coverage and regenerate twelve-path ledger\n37bc9cada820db6a4fe0c093f473e5530dc801da namespace: durable lab and customization record\n9487816f33050b3b6aba108dce5d87a291055c19 seam: bind stable bootstrap and zero-tax admission\n7c0dc94e73dbce8a7b265bd6d370275cc67dfd84 seam: ledger, approvals folder and pre-commit hook",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -89,6 +89,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "3fe0424a637bb59a6f2fc5cf554a20b8038d5269 seam: record the Durable agent fix round (stored skill expansion, pinned show-me, guarded image tools)",
         "44fd8f06f69ed4d035f6e2ecbbef46a6b9ab2be5 seam: record the Durable agent prompt, skill commands and image tools",
         "0cc408eb34bae6b88d8aebc66bb7fe0d0eeec5ff fix: align design gate seam ledger with the fork",
         "b28e2380d6c64142d47516143151d4a3affa5c4a feat: guard Durable design choices and package boundaries",
@@ -313,7 +314,7 @@
     {
       "path": "throughline/durable-agent/README.md",
       "class": "fork-namespace",
-      "reason": "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools\nf74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole\n77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins\nde71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools\nf74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole\n77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -323,6 +324,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins",
         "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
         "f685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools",
         "f74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole",
@@ -404,7 +406,7 @@
     {
       "path": "throughline/durable-agent/src/image-tools.ts",
       "class": "fork-namespace",
-      "reason": "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools",
+      "reason": "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins\nde71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -414,6 +416,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins",
         "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
         "f685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools"
       ],
@@ -439,7 +442,7 @@
     {
       "path": "throughline/durable-agent/src/main.ts",
       "class": "fork-namespace",
-      "reason": "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools\nc84486387d86a986450531b8c8f577d96ce4a5a1 revert: remove extension bridge from Pi fork main\n3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable\na31136abb39f3a7d9d2df80c08a5db536e864689 namespace: Durable agents load installed Pi extensions through the bridge\nf74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole\n77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins\nde71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools\nc84486387d86a986450531b8c8f577d96ce4a5a1 revert: remove extension bridge from Pi fork main\n3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable\na31136abb39f3a7d9d2df80c08a5db536e864689 namespace: Durable agents load installed Pi extensions through the bridge\nf74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole\n77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -449,6 +452,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins",
         "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
         "f685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools",
         "c84486387d86a986450531b8c8f577d96ce4a5a1 revert: remove extension bridge from Pi fork main",
@@ -465,7 +469,7 @@
     {
       "path": "throughline/durable-agent/src/program.ts",
       "class": "fork-namespace",
-      "reason": "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nc84486387d86a986450531b8c8f577d96ce4a5a1 revert: remove extension bridge from Pi fork main\n3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable\nf74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole\n77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\n9cd1aadb930ed7b763d2343c09ce864ef7d7fe0d namespace: compact can wait for its task; configure takes instructions\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins\nde71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nc84486387d86a986450531b8c8f577d96ce4a5a1 revert: remove extension bridge from Pi fork main\n3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable\nf74fa0040ed2fa41585132348d5645d8d7c2b5c5 namespace: carry a stock Pi session into a Durable store whole\n77429fb96ebcc4ef336f01cfb9e3a6c49ea5412b namespace: ThroughLine tools ride the agent program's own link; no MCP client or token\n9cd1aadb930ed7b763d2343c09ce864ef7d7fe0d namespace: compact can wait for its task; configure takes instructions\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n822c20848dddf5f2b2690510597893232c998890 namespace: stop commands a killed agent program leaves running; broker stream probes\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -475,6 +479,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins",
         "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
         "c84486387d86a986450531b8c8f577d96ce4a5a1 revert: remove extension bridge from Pi fork main",
         "3ed3b10d6b342c16d51f18216818565b52c36f86 namespace: carry prompt discovery and boundary state into Durable",
@@ -526,7 +531,7 @@
     {
       "path": "throughline/durable-agent/src/setup.ts",
       "class": "fork-namespace",
-      "reason": "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
+      "reason": "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins\nde71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools\nc9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program\n468f73ece2a3d3b90c56177958de9491507aed08 namespace: Pi Durable agent program (build 1)",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -536,6 +541,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins",
         "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
         "f685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools",
         "c9e5a5e8576a365062c784a7f1fcc15aa2b8d3ad namespace: ThroughLine approvals, MCP tools, orchestration and Claude standard prompt in the Durable agent program",
@@ -546,7 +552,7 @@
     {
       "path": "throughline/durable-agent/src/skill-commands.ts",
       "class": "fork-namespace",
-      "reason": "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools",
+      "reason": "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins\nde71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -556,6 +562,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins",
         "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
         "f685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools"
       ],
@@ -599,7 +606,7 @@
     {
       "path": "throughline/durable-agent/test/agent.test.ts",
       "class": "fork-namespace",
-      "reason": "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools",
+      "reason": "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins\nde71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -609,6 +616,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins",
         "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
         "f685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools"
       ],
@@ -685,7 +693,7 @@
     {
       "path": "throughline/durable-agent/test/fixtures/http-probe.ts",
       "class": "fork-namespace",
-      "reason": "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
+      "reason": "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins\nde71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -695,6 +703,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins",
         "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit"
       ],
       "legacy_rules": []
@@ -754,7 +763,7 @@
     {
       "path": "throughline/durable-agent/test/runtime-install.test.ts",
       "class": "fork-namespace",
-      "reason": "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools\n39e1ec490a66f21be7368451781996c00aa39909 namespace: the Durable setup guard runs when started through the current link\n5b7198051440a1e9fdb284081969b3c21bce9d14 namespace: install the Durable agent program as a pinned, read-only runtime copy",
+      "reason": "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins\nde71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit\nf685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools\n39e1ec490a66f21be7368451781996c00aa39909 namespace: the Durable setup guard runs when started through the current link\n5b7198051440a1e9fdb284081969b3c21bce9d14 namespace: install the Durable agent program as a pinned, read-only runtime copy",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -764,6 +773,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins",
         "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
         "f685987df4b5b161685575e1006744e871a98359 feat: Durable agent owns its prompt, skill commands and pinned image tools",
         "39e1ec490a66f21be7368451781996c00aa39909 namespace: the Durable setup guard runs when started through the current link",
@@ -774,7 +784,7 @@
     {
       "path": "throughline/durable-agent/test/setup.test.ts",
       "class": "fork-namespace",
-      "reason": "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
+      "reason": "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins\nde71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit",
       "reason_source": "commit-subjects",
       "imported_private_symbols": [],
       "schema_assumptions": [],
@@ -784,6 +794,7 @@
       "conflict_rule_inferred": false,
       "marker": false,
       "commits": [
+        "b004324b7ff3211a279184ffde41cf80962f06d2 fix: typed skill commands stay the user's message, exact skill text replays from the store; full image contract; pinned show-me wins",
         "de71e97c9bced68d48987e166bb50c0400650d79 fix: Durable agent survives broken image add-ons, pins show-me, stores skill expansion at submit"
       ],
       "legacy_rules": []
