@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -250,6 +250,26 @@ test("a start refused by a live owner leaves the store unmarked", async () => {
 	await assert.rejects(program.hello, /STORE_ALREADY_OWNED/);
 	await program.exited;
 	assert.ok(!existsSync(join(store, "owner-reads.v1")), "an older agent's running store is not marked");
+});
+
+// Rereview13-2 #2: the marker was written with the lock, so a start that failed later marked an older store anyway; and
+// a dangling link at the marker's name counted as a marker for the writer but not for show-me.
+test("a start that fails after taking the lock leaves the store unmarked; a link at the marker's name is replaced by a file", async () => {
+	const { store, cwd } = await fresh();
+	await mkdir(store, { recursive: true });
+	await writeFile(join(store, "store.sqlite"), "not a database");
+	const failing = startBash(store, cwd);
+	await assert.rejects(failing.hello, /PROGRAM_FAILED/);
+	await failing.exited;
+	assert.ok(!existsSync(join(store, "owner-reads.v1")), "a failed start leaves the store unmarked");
+	const linked = (await fresh()).store;
+	await mkdir(linked, { recursive: true });
+	await symlink(join(linked, "nowhere"), join(linked, "owner-reads.v1"));
+	const program = startBash(linked, cwd);
+	await program.hello;
+	assert.ok((await lstat(join(linked, "owner-reads.v1"))).isFile(), "the marker is a regular file");
+	await program.call("drain");
+	await program.exited;
 });
 
 // Item 2 (Rereview12-1 #2): the read socket is an add-on; when it cannot be created the agent starts and works, the

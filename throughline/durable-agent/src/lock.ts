@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { link, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, readFile, rename, rm, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 // Pi Durable has no cross-process locking: "One process owns a storage at a time" (durable README).
@@ -61,8 +61,7 @@ async function readOwner(path: string): Promise<LockOwner | undefined> {
 
 /**
  * Take the store's lock: publish this owner's record (reads "starting") atomically, so no reader ever sees a partial
- * record, then mark the store as read from its owner (OWNER_READS_MARKER). The marker comes after the lock, so a start
- * refused by a live older program leaves that program's store unmarked.
+ * record. The program marks the store (markStore) only after it opened and checked it.
  */
 export async function lockStore(directory: string): Promise<StoreLock> {
 	await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -80,7 +79,6 @@ export async function lockStore(directory: string): Promise<StoreLock> {
 			continue;
 		}
 		await unlink(draft);
-		await markStore(directory);
 		const lock: StoreLock = {
 			owner,
 			async setReads(reads) {
@@ -133,15 +131,24 @@ async function reclaimIfDead(directory: string, path: string): Promise<void> {
 	}
 }
 
-/** Create the permanent marker once (exclusive create; an existing marker is kept as it is), flushed with its folder. */
-async function markStore(directory: string): Promise<void> {
-	try {
-		const file = await open(join(directory, OWNER_READS_MARKER), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-		await file.sync();
-		await file.close();
-	} catch (error) {
-		if (errorCode(error) !== "EEXIST") throw error;
-		return;
+/**
+ * Create the permanent marker once, flushed with its folder. An existing regular file is kept; anything else at that
+ * name (a link, dangling or not, a folder) is not a marker this program wrote, so it is replaced: show-me counts any
+ * entry at that name as marked without following it, and the writer must agree.
+ */
+export async function markStore(directory: string): Promise<void> {
+	const path = join(directory, OWNER_READS_MARKER);
+	for (let attempt = 0; ; attempt++) {
+		try {
+			const file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+			await file.sync();
+			await file.close();
+			break;
+		} catch (error) {
+			if (errorCode(error) !== "EEXIST" || attempt > 0) throw error;
+			if ((await lstat(path)).isFile()) return;
+			await rm(path, { recursive: true });
+		}
 	}
 	const folder = await open(directory, constants.O_RDONLY);
 	try {

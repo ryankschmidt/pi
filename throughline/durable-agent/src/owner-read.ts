@@ -1,10 +1,12 @@
 // The agent's read socket: a reader on this host (show-me) asks the running program for its thread's live branch. The
 // socket's path is written in the store's owner.lock, so it belongs to the live owner. Each connection carries exactly
-// one `entries` request and one reply, then closes; every step has a size limit and a deadline, so a reader can neither
-// hold the agent's memory or database nor wait forever on a broken owner. A read is a page of the bound conversation up
-// to a fixed last entry: the first page fixes it, later pages name the same conversation and last entry, and a rewind
-// between pages is refused (REWOUND) so the reader starts again. A conversation's visible range never loses or changes
-// an entry, so the pages together are exactly the branch that stayed live for the whole read.
+// one `entries` request and one reply, then closes; both are counted in bytes before anything is parsed or sent, and
+// each phase has an absolute deadline, so a reader can neither hold the agent's memory or database nor keep a slot. A
+// read is a page of the bound conversation up to a fixed last entry: the first page fixes it, later pages name the same
+// conversation and last entry. Every page is read inside the program's serialized step that rebinds the thread on a
+// rewind (`withBound`), so a page is the branch that was bound for that whole step, and a page asked for a conversation
+// that is no longer bound is refused (REWOUND) so the reader starts again: a reply is the old live branch or the new
+// one, never a withdrawn one.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
@@ -17,8 +19,10 @@ import { encode, type ProgramMessage } from "./protocol.ts";
 /** One page of a read: the conversation and last entry it is fixed to, the entries after `after`, and whether more follow. */
 export type ReadPage = { store: string; conversationId: number; lastEntryId: number; items: unknown[]; more: boolean };
 export type OwnerReads = { readonly socket: string; close(): Promise<void> };
+/** Runs `read` with the bound conversation inside the program's serialized step, so no rebind lands during it. */
+export type WithBound = <T>(read: (bound: Conversation) => Promise<T>) => Promise<T>;
 
-/** Limits of one connection; a request is a few numbers, a reply is one page. */
+/** Limits of one connection, in bytes and milliseconds from the moment the phase starts. */
 export type ReadLimits = {
 	requestBytes: number;
 	replyBytes: number;
@@ -41,12 +45,7 @@ export const READ_LIMITS: ReadLimits = {
  * past the macOS socket path limit, so the path lives in the owner record) and answer one `entries` request per
  * connection. Throws if the socket cannot be created; the program then runs without it (program.ts).
  */
-export async function serveOwnerReads(
-	store: string,
-	current: () => Conversation,
-	context: Context,
-	limits: ReadLimits = READ_LIMITS,
-): Promise<OwnerReads> {
+export async function serveOwnerReads(store: string, withBound: WithBound, context: Context, limits: ReadLimits = READ_LIMITS): Promise<OwnerReads> {
 	// mkdtemp makes the folder 0700 before the socket exists, so no other user can reach the socket at any moment.
 	const folder = mkdtempSync(join(tmpdir(), "pi-durable-"));
 	const socketPath = join(folder, "read.sock");
@@ -54,7 +53,7 @@ export async function serveOwnerReads(
 	const server = createServer((socket) => {
 		open.add(socket);
 		socket.on("close", () => open.delete(socket));
-		answerOne(socket, store, current, context, limits);
+		answerOne(socket, store, withBound, context, limits);
 	});
 	server.maxConnections = limits.connections;
 	try {
@@ -78,32 +77,36 @@ export async function serveOwnerReads(
 	};
 }
 
-/** Read one request line within the limits, answer it, and close; anything after the first line is ignored. */
-function answerOne(socket: Socket, store: string, current: () => Conversation, context: Context, limits: ReadLimits): void {
-	let buffer = "";
+/** Read one request line within the byte limit and deadline, answer it within the reply deadline, and close. */
+function answerOne(socket: Socket, store: string, withBound: WithBound, context: Context, limits: ReadLimits): void {
+	const chunks: Buffer[] = [];
+	let received = 0;
 	let answered = false;
+	// Absolute deadlines, not idle timeouts: a peer sending a byte now and then still loses its slot on time.
+	let deadline = setTimeout(() => socket.destroy(), limits.requestTimeoutMs);
+	socket.on("close", () => clearTimeout(deadline));
+	socket.on("error", () => socket.destroy());
 	const reply = (message: ProgramMessage) => {
 		if (!socket.destroyed) socket.end(encode(message));
 	};
-	socket.setEncoding("utf8");
-	socket.setTimeout(limits.requestTimeoutMs, () => socket.destroy());
-	socket.on("error", () => socket.destroy());
-	socket.on("data", (chunk: string) => {
+	socket.on("data", (chunk: Buffer) => {
 		if (answered) return;
-		buffer += chunk;
-		const end = buffer.indexOf("\n");
-		if (end < 0) {
-			if (buffer.length > limits.requestBytes) {
-				answered = true;
-				reply({ kind: "error", code: "REQUEST_TOO_LARGE", message: `a request is at most ${limits.requestBytes} bytes` });
-			}
-			return;
+		const newline = chunk.indexOf(0x0a);
+		const taken = newline < 0 ? chunk : chunk.subarray(0, newline);
+		received += taken.length;
+		// Counted before parsing, whether or not the newline arrived in this chunk.
+		if (received > limits.requestBytes) {
+			answered = true;
+			return reply({ kind: "error", code: "REQUEST_TOO_LARGE", message: `a request is at most ${limits.requestBytes} bytes` });
 		}
+		chunks.push(taken);
+		if (newline < 0) return;
 		answered = true;
-		socket.setTimeout(limits.replyTimeoutMs, () => socket.destroy());
-		const request = parseRequest(buffer.slice(0, end));
+		clearTimeout(deadline);
+		deadline = setTimeout(() => socket.destroy(), limits.replyTimeoutMs);
+		const request = parseRequest(Buffer.concat(chunks).toString("utf8"));
 		if ("error" in request) return reply({ kind: "error", code: "BAD_REQUEST", message: request.error });
-		readPage(store, current(), request.params, context, limits).then(
+		withBound((bound) => readPage(store, bound, request.params, context, limits, request.id)).then(
 			(page) => reply({ kind: "result", id: request.id, value: page }),
 			(error: unknown) =>
 				reply({
@@ -128,7 +131,7 @@ function parseRequest(line: string): { id: string; params: Params } | { error: s
 	}
 	if (typeof message !== "object" || message === null) return { error: "the request was not an object" };
 	const { kind, id, method, params } = message as { kind?: unknown; id?: unknown; method?: unknown; params?: Record<string, unknown> };
-	if (kind !== "call" || typeof id !== "string") return { error: "send one call with an id" };
+	if (kind !== "call" || typeof id !== "string" || id.length > 128) return { error: "send one call with an id of at most 128 characters" };
 	if (method !== "entries") return { error: "this socket answers only entries" };
 	const number = (value: unknown) => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined);
 	const conversationId = number(params?.conversationId);
@@ -145,8 +148,8 @@ class ReadRefused extends Error {
 	}
 }
 
-/** One page of the bound conversation up to its last entry (fixed by the first page), trimmed to the reply limit. */
-async function readPage(store: string, bound: Conversation, params: Params, context: Context, limits: ReadLimits): Promise<ReadPage> {
+/** One page of the bound conversation up to its last entry (fixed by the first page), trimmed so the whole reply fits. */
+async function readPage(store: string, bound: Conversation, params: Params, context: Context, limits: ReadLimits, id: string): Promise<ReadPage> {
 	const conversationId = Number(bound.id);
 	if (params.conversationId !== undefined && params.conversationId !== conversationId) {
 		throw new ReadRefused("REWOUND", "the thread was rewound during the read; read it again");
@@ -159,10 +162,11 @@ async function readPage(store: string, bound: Conversation, params: Params, cont
 		undefined,
 		context,
 	);
+	// The reply's bytes without items, then each item with its comma: the encoded reply never exceeds replyBytes.
+	let bytes = Buffer.byteLength(encode({ kind: "result", id, value: { store, conversationId, lastEntryId, items: [], more: true } }));
 	const items: unknown[] = [];
-	let bytes = 0;
 	for (const item of page.items) {
-		const size = Buffer.byteLength(JSON.stringify(item));
+		const size = Buffer.byteLength(JSON.stringify(item)) + 1;
 		if (bytes + size > limits.replyBytes) {
 			if (items.length === 0) throw new ReadRefused("ENTRY_TOO_LARGE", `entry ${String(item.id)} is larger than one reply (${limits.replyBytes} bytes)`);
 			return { store, conversationId, lastEntryId, items, more: true };

@@ -24,8 +24,8 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { Binding } from "./binding.ts";
 import { carrySession } from "./carry.ts";
-import { lockStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
-import { type OwnerReads, serveOwnerReads } from "./owner-read.ts";
+import { lockStore, markStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
+import { type OwnerReads, serveOwnerReads, type WithBound } from "./owner-read.ts";
 import { reapLeftovers, startReaper } from "./reaper.ts";
 import {
 	type Call,
@@ -142,10 +142,10 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 	 * The read socket is an add-on: if it cannot be created the agent runs on, the owner record says reads are unavailable
 	 * and why (show-me refuses with that reason instead of reading anything), the thread's prompt says so, and it is logged.
 	 */
-	async function startReads(current: () => Conversation): Promise<OwnerReads | undefined> {
+	async function startReads(withBound: WithBound): Promise<OwnerReads | undefined> {
 		let started: OwnerReads | undefined;
 		try {
-			started = await serveOwnerReads(options.storeDir, current, context);
+			started = await serveOwnerReads(options.storeDir, withBound, context);
 			await lock.setReads({ state: "ready", socket: started.socket });
 			return started;
 		} catch (error) {
@@ -170,6 +170,21 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		if (binding?.agentId != null && binding.agentId !== options.agentId) {
 			throw new Error(`STORE_BINDING_MISMATCH: store belongs to agent ${binding.agentId}`);
 		}
+		// Marked only once the store opened and is this agent's, before this program commits anything to it: a start that
+		// fails earlier leaves an older agent's store as it was (lock.ts, OWNER_READS_MARKER).
+		await markStore(options.storeDir);
+		// Socket reads and rebinds run one at a time (owner-read.ts): a read sees the binding before a rewind or after it.
+		let step: Promise<unknown> = Promise.resolve();
+		const serialized = <T>(work: () => Promise<T>): Promise<T> => {
+			const run = step.then(work, work);
+			step = run.catch(() => undefined);
+			return run;
+		};
+		const rebind = (next: Conversation) =>
+			serialized(async () => {
+				await bind(next.id);
+				conversation = next;
+			});
 		let conversation: Conversation;
 		if (binding?.conversationId != null) {
 			const found = await opened.conversation(binding.conversationId as ConversationId, context);
@@ -217,7 +232,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				context,
 			);
 		// Before resume: no command a turn runs can start before the owner record says whether reads are ready.
-		reads = await startReads(() => conversation);
+		reads = await startReads((read) => serialized(() => read(conversation)));
 		opened.resume();
 
 		send(helloFor(conversation));
@@ -275,9 +290,8 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 						{ ownership: { kind: "ownerless" } },
 						context,
 					);
-					await bind(fork.id);
+					await rebind(fork);
 					await stopWatches();
-					conversation = fork;
 					return { conversationId: fork.id };
 				}
 				case "watch": {
@@ -363,9 +377,8 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 									context,
 								)
 							: await conversation.fork(previous.id, { ownership: { kind: "ownerless" } }, context);
-					await bind(next.id);
+					await rebind(next);
 					await stopWatches();
-					conversation = next;
 					return { conversationId: next.id, at: previous?.id ?? null };
 				}
 			}
