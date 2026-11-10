@@ -34,4 +34,7 @@ test("copyTree keeps relative links pointing inside the copy, copies bytes and m
 	writeFileSync(join(fork, "packages/durable/dist/index.js"), "export const v = 2;\n");
 	assert.equal(readFileSync(join(version, "packages/durable/dist/index.js"), "utf8"), "export const v = 1;\n", "a later source edit never reaches the copy");
 	assert.throws(() => copyTree(join(fork, "packages"), join(version, "packages")), /exist/i);
+	// Rereview10-3 #3: an existing empty folder is refused too, not merged into.
+	mkdirSync(join(root, "empty"));
+	assert.throws(() => copyTree(join(fork, "packages"), join(root, "empty")), /already exists/);
 });

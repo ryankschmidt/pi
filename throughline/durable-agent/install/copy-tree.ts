@@ -3,10 +3,12 @@
 // Node's copy clones where the filesystem can (APFS, Btrfs, XFS) and copies otherwise, so a later edit in the source
 // never reaches the copy. Links are copied as links with their text unchanged: node_modules links workspace packages
 // with relative links, which must keep pointing inside the copy, never back at the fork. Node only, so it runs alone.
-import { constants, cpSync } from "node:fs";
+import { constants, cpSync, existsSync } from "node:fs";
 
 /** Copy `source` to `target` (which must not exist), recursively, cloning where possible and keeping links verbatim. */
 export function copyTree(source: string, target: string): void {
+	// cpSync refuses an existing file but merges into an existing folder; a version folder is only ever written fresh.
+	if (existsSync(target)) throw new Error(`copy refused: ${target} already exists`);
 	cpSync(source, target, {
 		recursive: true,
 		verbatimSymlinks: true,
