@@ -39,10 +39,12 @@ const legacy = [
 	{ seq: 4, conversation: { id: 3, parent: { conversationId: 1, at: 1 } } },
 	{ seq: 5, entry: user(3, 3, "New branch choice.") },
 ].map((line) => JSON.stringify(line)).join("\n");
+// Round 10: the legacy reading applies only under the name an older agent keeps current; set aside, it is refused.
+console.log(`legacy transcript.jsonl read as legacy: ${JSON.stringify(reader.sentences(reader.fromDurable(legacy, "/store/transcript.jsonl")))}`);
 try {
-	reader.fromDurable(legacy);
-	console.log("legacy transcript: READ (wrong)");
+	reader.fromDurable(legacy, "/store/transcript.superseded-by-conversation-snapshot.jsonl");
+	console.log("set-aside legacy transcript: READ (wrong)");
 } catch (error) {
-	console.log(`legacy transcript refused: ${(error as Error).message}`);
+	console.log(`set-aside legacy transcript refused: ${(error as Error).message}`);
 }
 process.exit(0);

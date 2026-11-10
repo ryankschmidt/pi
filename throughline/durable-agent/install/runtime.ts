@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { loadSkills, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { imageModuleTools } from "../src/image-tools.ts";
+import { copyTree } from "./copy-tree.ts";
 
 export const PIN_SCHEMA = "throughline.pi-durable-agent-pin.v1";
 const HOME = homedir();
@@ -201,15 +202,12 @@ export async function install(
 	const id = `${commit.slice(0, 12)}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
 	const target = join(runtime, "versions", id);
 	mkdirSync(join(target, "throughline"), { recursive: true });
-	for (const path of COPIED) {
-		// APFS clones: a later edit in the fork never reaches this copy.
-		execFileSync("cp", ["-cR", join(from, path), join(target, dirname(path) === "." ? "" : dirname(path))]);
-	}
+	for (const path of COPIED) copyTree(join(from, path), join(target, path));
 	if (!existsSync(join(target, ENTRY))) throw new Error(`refused: the copy has no ${ENTRY}`);
 	mkdirSync(join(target, IMAGE_COPY), { recursive: true });
-	for (const name of IMAGE_FILES) execFileSync("cp", [join(imageModule, name), join(target, IMAGE_COPY, name)]);
+	for (const name of IMAGE_FILES) copyTree(join(imageModule, name), join(target, IMAGE_COPY, name));
 	mkdirSync(dirname(join(target, SHOW_ME_COPY)), { recursive: true });
-	execFileSync("cp", [showMe, join(target, SHOW_ME_COPY)]);
+	copyTree(showMe, join(target, SHOW_ME_COPY));
 	// The same loader and checks the agent runs at start, on the bytes this install will run: the copied files, not their
 	// source (a source that loads only beside files the install does not copy is refused here). Then the module's own
 	// schema check, run on those same copied bytes.

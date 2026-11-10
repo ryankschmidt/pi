@@ -1,15 +1,20 @@
 // conversation_snapshot: the agent tool that writes the calling conversation's visible entries (its live branch, in
 // order) to a new file beside the store and returns its path; the store is the only record. The name binds the
-// conversation and the last entry it saw, so it pins exactly what the file holds. Inside the thread the path appears
-// only in the tool result stored in that conversation, and any branch that holds that result also holds every entry in
-// the file (a fork keeps all entries up to its cut), so nothing the thread can reach names withdrawn words. Outside the
-// thread a file is an ordinary 0600 file: a person or process holding its path can open it until the next call or
-// program start removes it, and a reader that already opened it keeps its bytes. Cleanup failures are reported.
+// conversation and the last entry it saw, so it pins exactly what the file holds.
+//
+// Lifetime: a snapshot file lives while its conversation is the thread's bound one. A snapshot call never removes a file
+// of its own conversation, so a path it returned stays readable for the consumer it was handed to, however many calls
+// follow. Snapshots of any other conversation are removed when the thread binds another conversation (a rewind or fork,
+// see program.ts), again at program start before anything is served, and again by the next snapshot call if either
+// removal failed; failures are reported, never stopping the agent. A call running in a conversation that is no longer
+// bound writes nothing, and a file finished while a rewind landed is removed by its own call. So listing the folder (0700,
+// the agent's own user) finds only the live branch's snapshots. A reader that already opened a file keeps its bytes.
 
 import { chmodSync, closeSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import { defineExtension, defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@earendil-works/pi-durable";
+import { Binding, type StoredBinding } from "./binding.ts";
 
 export const SNAPSHOT_TOOL = "conversation_snapshot";
 /** The first line of every snapshot; show-me refuses a Durable file without it (an older transcript.jsonl holds every branch). */
@@ -43,11 +48,27 @@ export function createConversationSnapshotExtension(storeDir: string, pageSize =
 }
 
 /**
- * Remove every snapshot and temporary file (the program calls this at start; cleanup, not correctness). Returns one line
+ * Remove every snapshot and temporary file (the program calls this at start and after each rebind). Returns one line
  * per failure; only an absent folder counts as nothing to remove.
  */
 export function clearSnapshots(storeDir: string): string[] {
 	return removeSnapshots(snapshotFolder(storeDir), () => false);
+}
+
+/** The name an older agent's transcript.jsonl is moved to; show-me reads the legacy format only under transcript.jsonl. */
+export const LEGACY_TRANSCRIPT_ASIDE = "transcript.superseded-by-conversation-snapshot.jsonl";
+
+/**
+ * Move an older agent's transcript.jsonl aside (program start). That agent kept it current; this one never writes it, so
+ * left in place a replayed old skill body could read it as current while it misses every new turn. It is derived from
+ * the store, and an older agent rolled back in rebuilds it whole at its start. A failure is logged; the agent still starts.
+ */
+export function setAsideLegacyTranscript(storeDir: string, log: (line: string) => void): void {
+	try {
+		renameSync(join(storeDir, "transcript.jsonl"), join(storeDir, LEGACY_TRANSCRIPT_ASIDE));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") log(`could not set aside ${join(storeDir, "transcript.jsonl")} (${message(error)}); show-me may read it as current`);
+	}
 }
 
 function removeSnapshots(folder: string, keep: (name: string) => boolean): string[] {
@@ -98,11 +119,14 @@ async function writeSnapshot(
 	mkdirSync(folder, { recursive: true, mode: 0o700 });
 	chmodSync(folder, 0o700);
 	const temporary = join(folder, `.tmp-${process.pid}-${api.callId.replace(/[^\w-]/g, "_")}`);
+	const conversation = Number(api.conversationId);
+	const bound = (binding: StoredBinding | undefined) => binding?.conversationId === conversation;
 	let path: string;
 	try {
-		// One commit is one consistent read of the fork-aware visible range; each page is written as it arrives, so one
-		// page is in memory at a time. The file is opened inside the callback, so a rerun starts it again.
+		// One commit is one consistent read of the binding and the fork-aware visible range; each page is written as it
+		// arrives, so one page is in memory at a time. The file is opened inside the callback, so a rerun starts it again.
 		const last = await api.commit(async (tx) => {
+			if (!bound(await tx.doc(Binding))) return undefined;
 			const fd = openSync(temporary, "w", 0o600);
 			try {
 				// The format line is written first at a fixed width and filled in once the last entry is known.
@@ -125,13 +149,23 @@ async function writeSnapshot(
 				closeSync(fd);
 			}
 		}, context);
-		path = join(folder, `${Number(api.conversationId)}-${last}.jsonl`);
+		if (last === undefined) throw new Error(NOT_BOUND);
+		path = join(folder, `${conversation}-${last}.jsonl`);
 		renameSync(temporary, path);
 	} finally {
 		rmSync(temporary, { force: true });
 	}
-	// One snapshot on disk: an earlier path now fails visibly instead of being read stale. Another live call's
-	// temporary file (same pid) is left alone; a killed program's are removed.
-	const cleanupFailures = removeSnapshots(folder, (name) => join(folder, name) === path || name.startsWith(`.tmp-${process.pid}-`));
+	// A rebind that committed while this file was written: its cleanup may have run before the rename, so this call
+	// removes its own file (program.ts clears after the binding commit, so one of the two always sees the other).
+	if (!bound(await api.snapshot(Binding, context))) {
+		rmSync(path, { force: true });
+		throw new Error(NOT_BOUND);
+	}
+	// Retry what a failed rebind cleanup left: other conversations' snapshots and a killed program's temporary files.
+	// This conversation's snapshots and this program's in-flight temporary files stay.
+	const cleanupFailures = removeSnapshots(folder, (name) => name.startsWith(`${conversation}-`) || name.startsWith(`.tmp-${process.pid}-`));
 	return { path, cleanupFailures };
 }
+
+const NOT_BOUND =
+	"conversation_snapshot wrote nothing: this conversation is no longer the thread's live branch (a rewind or fork moved the thread). Call conversation_snapshot again from the thread.";

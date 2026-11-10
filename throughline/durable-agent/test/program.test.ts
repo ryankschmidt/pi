@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readdirSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai";
 import { type ConversationId, createRegistry, type EntryId, Harness } from "@earendil-works/pi-durable";
@@ -194,10 +194,13 @@ test("conversation_snapshot after a restart writes the live branch only: a rewou
 	assert.ok(!JSON.stringify(written).includes("Withdrawn branch choice."), "the withdrawn turn is never in the file");
 	assert.ok(!(await readdir(store)).includes("transcript.jsonl"), "no transcript file is written");
 
+	// Rereview9-2 #1, 9-3 #2: a second call never removes the first path; a consumer handed it earlier still reads it whole.
+	const firstBytes = await readFile(path, "utf8");
 	await turn(second, "snapshot again", "e");
 	const again = snapshotPath(await storedEntries(second));
 	assert.notEqual(again, path);
-	assert.deepEqual(await readdir(join(store, "snapshots")), [again.split("/").at(-1)], "the earlier snapshot is removed");
+	assert.equal(await readFile(path, "utf8"), firstBytes, "the earlier snapshot is still there, unchanged");
+	assert.deepEqual((await readdir(join(store, "snapshots"))).sort(), [path, again].map((p) => p.split("/").at(-1)).sort());
 	await second.call("drain");
 	await second.exited;
 });
@@ -233,7 +236,9 @@ test("a program killed while conversation_snapshot writes leaves no partial file
 	const written = await snapshotEntries(path);
 	const last = Math.max(...written.map((entry) => entry.id));
 	assert.deepEqual(written.map((entry) => entry.id), entries.map((entry) => entry.id).filter((id) => id <= last));
-	assert.deepEqual(await readdir(folder), [path.split("/").at(-1)], "the killed write's temporary file is gone");
+	// The killed call may be replayed after restart and keep its own whole snapshot (same branch); no temporary file remains.
+	assert.deepEqual((await readdir(folder)).filter((name) => name.startsWith(".tmp-")), [], "the killed write's temporary file is gone");
+	for (const name of await readdir(folder)) await snapshotEntries(join(folder, name));
 	await second.call("drain");
 	await second.exited;
 });
@@ -286,6 +291,8 @@ test("a rewind during a snapshot: no snapshot reachable from the live branch hol
 	const { paths } = await reachableSnapshots(program);
 	assert.ok(!paths.includes(earlier), "the snapshot written before the rewind is not reachable from the live branch");
 	await assertReachableAreLive(program, "Withdrawn choice.", "rewind during a snapshot");
+	// Rereview9-1 #2: listing the folder, not only following stored paths, finds nothing withdrawn, earlier or in flight.
+	await assertFolderHolds(store, "Withdrawn choice.", "rewind during a snapshot");
 
 	await turn(program, "snapshot after the rewind", "s3");
 	const after = await snapshotEntries(snapshotPath(await storedEntries(program)));
@@ -299,6 +306,13 @@ async function reachableSnapshots(program: AgentProgram): Promise<{ live: Stored
 	const live = await storedEntries(program);
 	const paths = [...new Set([...JSON.stringify(live).matchAll(/(\/[^"\\]*\/snapshots\/[^"\\]+\.jsonl)/g)].map((m) => m[1] as string))];
 	return { live, paths };
+}
+/** No file anyone can list in the snapshots folder holds the withdrawn text (Rereview9-1 #2: same-account listing). */
+async function assertFolderHolds(store: string, withdrawn: string, label: string) {
+	const folder = join(store, "snapshots");
+	for (const name of existsSync(folder) ? await readdir(folder) : []) {
+		assert.ok(!(await readFile(join(folder, name), "utf8")).includes(withdrawn), `${label}: ${name} is listable in the snapshots folder and holds withdrawn text`);
+	}
 }
 /** Every reachable snapshot holds only entries of the live branch. */
 async function assertReachableAreLive(program: AgentProgram, withdrawn: string, label: string) {
@@ -435,7 +449,7 @@ test("a snapshot cleanup failure never stops the agent and is never silent: logg
 	}
 });
 
-test("Rereview8-3 #2: a snapshot taken before a rewind is not reachable from the new live branch, though its file stays on disk until cleanup", async () => {
+test("Rereview9-1 #2: after a rewind no file in the snapshots folder holds withdrawn words, without a restart; the new branch's snapshots stay", async () => {
 	const { store, cwd } = await fresh();
 	const program = startSnapshot(store, cwd);
 	await program.hello;
@@ -451,10 +465,30 @@ test("Rereview8-3 #2: a snapshot taken before a rewind is not reachable from the
 	const { paths } = await reachableSnapshots(program);
 	assert.ok(!paths.includes(stale), "the old path is not named anywhere in the live branch");
 	await assertReachableAreLive(program, "Withdrawn.", "after rewind");
-	// Outside the thread the file is an ordinary file until the next snapshot call or start removes it.
-	assert.ok(existsSync(stale), "still on disk: a person or process holding the path can open it until cleanup");
+	// The rewind itself removed it: listing the folder (what any same-account tool can do) finds nothing withdrawn.
+	assert.ok(!existsSync(stale), "the rewind removed the withdrawn branch's snapshot");
+	await assertFolderHolds(store, "Withdrawn.", "after rewind");
 	await turn(program, "snapshot after the rewind", "r5");
-	assert.ok(!existsSync(stale), "the next snapshot call removes it");
+	const kept = snapshotPath(await storedEntries(program));
+	await turn(program, "snapshot once more", "r6");
+	assert.ok(existsSync(kept), "a later call on the same branch keeps the earlier one");
+	await program.call("drain");
+	await program.exited;
+});
+
+// Rereview9-1 #1: an older agent kept transcript.jsonl current; this agent does not. At start it sets the file aside under
+// a name show-me's legacy reading refuses, so a replayed old skill body cannot read it as current, and never writes it again.
+test("an upgraded store's transcript.jsonl is set aside at start and never rewritten", async () => {
+	const { store, cwd } = await fresh();
+	await mkdir(store, { recursive: true });
+	const legacyBytes = `${JSON.stringify({ seq: 1, conversation: { id: 1 } })}\n`;
+	await writeFile(join(store, "transcript.jsonl"), legacyBytes);
+	const program = startSnapshot(store, cwd);
+	await program.hello;
+	assert.ok(!existsSync(join(store, "transcript.jsonl")), "no file named transcript.jsonl remains once the program answers");
+	assert.equal(await readFile(join(store, "transcript.superseded-by-conversation-snapshot.jsonl"), "utf8"), legacyBytes);
+	await turn(program, "New decision after upgrade.", "u1");
+	assert.ok(!existsSync(join(store, "transcript.jsonl")), "the new program never writes it");
 	await program.call("drain");
 	await program.exited;
 });

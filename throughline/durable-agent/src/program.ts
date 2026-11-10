@@ -24,7 +24,7 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { Binding } from "./binding.ts";
 import { carrySession } from "./carry.ts";
-import { clearSnapshots } from "./conversation-snapshot.ts";
+import { clearSnapshots, setAsideLegacyTranscript } from "./conversation-snapshot.ts";
 import { lockStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
 import { reapLeftovers, startReaper } from "./reaper.ts";
 import {
@@ -106,9 +106,10 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		throw error;
 	}
 
-	// Old snapshots are removed here, before anything is served, when removal succeeds; a failure is logged and the agent
-	// still starts (cleanup, not correctness: the thread can only reach a snapshot of its own branch).
+	// Before anything is served: snapshots a crash left (including one a rebind committed but never cleared) are removed,
+	// and an older agent's transcript.jsonl is set aside. Failures are logged and the agent still starts.
 	for (const failure of clearSnapshots(options.storeDir)) log(failure);
+	setAsideLegacyTranscript(options.storeDir, log);
 	if (options.reap) {
 		const killed = reapLeftovers(options.storeDir);
 		if (killed > 0) log(`stopped ${killed} command group(s) left by an earlier program`);
@@ -163,6 +164,9 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				stored.agentId = options.agentId;
 				stored.conversationId = id;
 			}, context);
+			// After the commit: every snapshot of the conversation the thread left is withdrawn with it (a snapshot finishing
+			// across this commit removes its own file; a crash before this line is covered by the clear at start).
+			for (const failure of clearSnapshots(options.storeDir)) log(failure);
 		}
 		if (options.carryFrom !== undefined) {
 			const summary = await carrySession(opened, conversation, options.carryFrom, options.storeDir, context);
