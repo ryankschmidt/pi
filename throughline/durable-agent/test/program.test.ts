@@ -252,16 +252,29 @@ test("a start refused by a live owner leaves the store unmarked", async () => {
 	assert.ok(!existsSync(join(store, "owner-reads.v1")), "an older agent's running store is not marked");
 });
 
-// Rereview13-2 #2: the marker was written with the lock, so a start that failed later marked an older store anyway; and
-// a dangling link at the marker's name counted as a marker for the writer but not for show-me.
-test("a start that fails after taking the lock leaves the store unmarked; a link at the marker's name is replaced by a file", async () => {
+// Rereview13-2 #2, 14-1 #1, 14-3 #2: the marker was written before later start-up steps that can fail, so a failed
+// upgrade made an old thread unreadable; and a dangling link at the marker's name counted for the writer but not for
+// show-me. The marker now comes only after the agent fully started with its socket serving.
+test("a start that fails before or after its read socket is serving leaves the store unmarked and its old file unchanged; a link at the marker's name is replaced by a file", async () => {
 	const { store, cwd } = await fresh();
 	await mkdir(store, { recursive: true });
 	await writeFile(join(store, "store.sqlite"), "not a database");
 	const failing = startBash(store, cwd);
 	await assert.rejects(failing.hello, /PROGRAM_FAILED/);
 	await failing.exited;
-	assert.ok(!existsSync(join(store, "owner-reads.v1")), "a failed start leaves the store unmarked");
+	assert.ok(!existsSync(join(store, "owner-reads.v1")), "a start failing before the socket leaves the store unmarked");
+	const late = (await fresh()).store;
+	await mkdir(late, { recursive: true });
+	const legacyBytes = `${JSON.stringify({ seq: 1, conversation: { id: 1 } })}\n`;
+	await writeFile(join(late, "transcript.jsonl"), legacyBytes);
+	const afterSocket = startProgram(process.execPath, [bashFixture, late, cwd, join(cwd, "no-such-session.jsonl")]);
+	started.push(afterSocket);
+	await assert.rejects(afterSocket.hello, /PROGRAM_FAILED: .*ENOENT/);
+	await afterSocket.exited;
+	assert.match(afterSocket.stderr(), /no-such-session\.jsonl/, "it failed carrying, after the socket was serving");
+	assert.ok(!existsSync(join(late, "owner-reads.v1")), "a start failing after the socket leaves the store unmarked");
+	assert.ok(!existsSync(join(late, "owner.lock")), "and releases its record");
+	assert.equal(await readFile(join(late, "transcript.jsonl"), "utf8"), legacyBytes, "the old file is unchanged");
 	const linked = (await fresh()).store;
 	await mkdir(linked, { recursive: true });
 	await symlink(join(linked, "nowhere"), join(linked, "owner-reads.v1"));

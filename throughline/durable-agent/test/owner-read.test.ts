@@ -1,7 +1,7 @@
 // The read socket's connection rules (build rounds 13 and 14; Rereview12-1 #3, 12-2 #2/#3, 12-3 #2, 13-1 #3, 13-2 #3,
 // 13-3 #3/#4): one request per connection, byte limits on request and whole reply counted before parsing or sending,
-// absolute deadlines, a clean close on disconnect, a read fixed to one conversation and last entry, and every page read
-// inside the step that rebinds the thread, so a reply is the old live branch or the new one, never a withdrawn one.
+// absolute deadlines, a clean close on disconnect, a read fixed to one conversation and last entry, and a rewind that
+// never waits on a read: reads in flight are abandoned with REWOUND, so a reply is never a withdrawn branch.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { connect } from "node:net";
@@ -27,26 +27,29 @@ const servers: { close(): Promise<void> }[] = [];
 after(async () => {
 	for (const server of servers) await server.close();
 });
-/** The program's serialized step (program.ts), around a bound conversation the test can rebind. */
+/** The program's rebind (program.ts): the generation is odd while it runs; it abandons reads in flight. */
 function thread(first: Conversation) {
 	let bound = first;
-	let step: Promise<unknown> = Promise.resolve();
-	const serialized = <T>(work: () => Promise<T>): Promise<T> => {
-		const run = step.then(work, work);
-		step = run.catch(() => undefined);
-		return run;
-	};
+	let generation = 0;
+	let reads: { abandon(): void } | undefined;
 	return {
-		withBound: <T>(read: (b: Conversation) => Promise<T>) => serialized(() => read(bound)),
-		rebind: (next: Conversation) =>
-			serialized(async () => {
-				bound = next;
-			}),
+		now: { generation: () => generation, conversation: () => bound },
+		attach: (served: { abandon(): void }) => {
+			reads = served;
+		},
+		rebind: async (next: Conversation) => {
+			generation++;
+			reads?.abandon();
+			await Promise.resolve();
+			bound = next;
+			generation++;
+		},
 	};
 }
 async function serve(first: Conversation, limits: Partial<ReadLimits> = {}) {
 	const owner = thread(first);
-	const reads = await serveOwnerReads("/store", owner.withBound, BACKGROUND_CONTEXT, { ...READ_LIMITS, ...limits });
+	const reads = await serveOwnerReads("/store", owner.now, BACKGROUND_CONTEXT, { ...READ_LIMITS, ...limits });
+	owner.attach(reads);
 	servers.push(reads);
 	return { socket: reads.socket, rebind: owner.rebind };
 }
@@ -122,25 +125,34 @@ test("a read is fixed to the last entry at its first page; a page for a conversa
 	assert.equal((await exchange(socket, call({ conversationId: 1, lastEntryId: 2, after: 1 }))).lines[0]?.code, "REWOUND");
 });
 
-// Rereview13-3 #3: the round-13 socket took the bound conversation once and read it while a rewind landed, answering
-// with the withdrawn branch after the new one was bound. Now a rebind waits for the read in progress, so that read is
-// the branch that was live for its whole step, and every later read sees the new branch.
-test("a rewind during a one-page read waits for it: the reply is the branch live for the whole read, the next read is the new branch", async () => {
-	let release: () => void = () => undefined;
-	const gate = new Promise<void>((resolve) => (release = resolve));
-	const { socket, rebind } = await serve(conversation(1, [{ id: 1, text: "live before the rewind" }], gate));
+// Rereview13-3 #3 and 14-2 #2: a rewind during a read must neither return the withdrawn branch nor wait for the read.
+// Round 14 made the rebind wait behind every queued read, so a read that never finished held the rewind. Now the rebind
+// goes ahead at once and the read in flight ends with REWOUND; the next read is the new branch.
+test("a rewind never waits on a read: a read that never finishes is abandoned with REWOUND, and the next read is the new branch", async () => {
+	const never = new Promise<void>(() => undefined);
+	const { socket, rebind } = await serve(conversation(1, [{ id: 1, text: "live before the rewind" }], never));
 	const reading = exchange(socket, call());
 	await new Promise((resolve) => setTimeout(resolve, 50));
-	let rebound = false;
-	const rewinding = rebind(conversation(2, [{ id: 1, text: "live after the rewind" }])).then(() => (rebound = true));
-	await new Promise((resolve) => setTimeout(resolve, 50));
-	assert.equal(rebound, false, "the rebind waits for the read in progress");
-	release();
-	const reply = (await reading).lines[0]?.value;
-	await rewinding;
-	assert.deepEqual([reply?.conversationId, reply?.items.map((entry) => entry.text)], [1, ["live before the rewind"]]);
+	const began = Date.now();
+	await rebind(conversation(2, [{ id: 1, text: "live after the rewind" }]));
+	assert.ok(Date.now() - began < 50, "the rebind did not wait for the read");
+	const abandoned = await reading;
+	assert.equal(abandoned.lines[0]?.code, "REWOUND", "the reader gets a clean error, never the withdrawn branch");
 	const afterRewind = (await exchange(socket, call())).lines[0]?.value;
 	assert.deepEqual([afterRewind?.conversationId, afterRewind?.items.map((entry) => entry.text)], [2, ["live after the rewind"]]);
+});
+
+test("a read whose rebind generation moved before its reply is answered REWOUND, not with its page", async () => {
+	let release: () => void = () => undefined;
+	const gate = new Promise<void>((resolve) => (release = resolve));
+	let generation = 0;
+	const reads = await serveOwnerReads("/store", { generation: () => generation, conversation: () => conversation(1, [{ id: 1, text: "old" }], gate) }, BACKGROUND_CONTEXT);
+	servers.push(reads);
+	const reading = exchange(reads.socket, call());
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	generation += 2;
+	release();
+	assert.equal((await reading).lines[0]?.code, "REWOUND");
 });
 
 test("anything but one entries call is refused; a reader that disconnects mid-request leaves the socket answering", async () => {
@@ -159,7 +171,7 @@ test("anything but one entries call is refused; a reader that disconnects mid-re
 });
 
 test("the socket lives in a private folder that close removes", async () => {
-	const reads = await serveOwnerReads("/store", thread(conversation(1, [])).withBound, BACKGROUND_CONTEXT);
+	const reads = await serveOwnerReads("/store", thread(conversation(1, [])).now, BACKGROUND_CONTEXT);
 	assert.ok(existsSync(reads.socket));
 	await reads.close();
 	assert.ok(!existsSync(reads.socket));

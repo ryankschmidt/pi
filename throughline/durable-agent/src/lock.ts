@@ -16,9 +16,10 @@ export type LockOwner = { pid: number; startedAt: string; nonce: string; reads?:
 export type StoreLock = { readonly owner: LockOwner; setReads(reads: Reads): Promise<void>; release(): Promise<void> };
 
 /**
- * The permanent marker this program writes in a store folder on its first start, before its owner record, and never
- * removes: from then on the store's old transcript.jsonl is never current, so show-me never reads it (only a store
- * never marked keeps show-me 2.0.7's reading). Empty: its existence is the whole record, so it cannot be half-written.
+ * The permanent marker this program writes in a store folder once it has fully started with its read socket serving,
+ * just before it can serve a turn or a rewind, and never removes: from then on the store's old transcript.jsonl is never
+ * current, so show-me never reads it (only a store never marked keeps show-me 2.0.7's reading).
+ * Empty: its existence is the whole record, so it cannot be half-written.
  */
 export const OWNER_READS_MARKER = "owner-reads.v1";
 
@@ -61,7 +62,7 @@ async function readOwner(path: string): Promise<LockOwner | undefined> {
 
 /**
  * Take the store's lock: publish this owner's record (reads "starting") atomically, so no reader ever sees a partial
- * record. The program marks the store (markStore) only after it opened and checked it.
+ * record. The program marks the store (markStore) only once it has fully started.
  */
 export async function lockStore(directory: string): Promise<StoreLock> {
 	await mkdir(directory, { recursive: true, mode: 0o700 });

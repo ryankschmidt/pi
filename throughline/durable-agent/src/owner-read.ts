@@ -3,10 +3,11 @@
 // one `entries` request and one reply, then closes; both are counted in bytes before anything is parsed or sent, and
 // each phase has an absolute deadline, so a reader can neither hold the agent's memory or database nor keep a slot. A
 // read is a page of the bound conversation up to a fixed last entry: the first page fixes it, later pages name the same
-// conversation and last entry. Every page is read inside the program's serialized step that rebinds the thread on a
-// rewind (`withBound`), so a page is the branch that was bound for that whole step, and a page asked for a conversation
-// that is no longer bound is refused (REWOUND) so the reader starts again: a reply is the old live branch or the new
-// one, never a withdrawn one.
+// conversation and last entry. A rewind never waits on a read: the program's rebind generation (BoundNow) is odd while
+// a rebind runs and moves on at its start and end; a rebind abandons every read in flight with REWOUND, a read that
+// starts during a rebind is refused, and a reply is sent only if the generation has not moved since its read began, in
+// the same step as the send. So a reply is the branch live for the whole read, never a withdrawn one, and the reader
+// starts again on REWOUND.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
@@ -18,9 +19,10 @@ import { encode, type ProgramMessage } from "./protocol.ts";
 
 /** One page of a read: the conversation and last entry it is fixed to, the entries after `after`, and whether more follow. */
 export type ReadPage = { store: string; conversationId: number; lastEntryId: number; items: unknown[]; more: boolean };
-export type OwnerReads = { readonly socket: string; close(): Promise<void> };
-/** Runs `read` with the bound conversation inside the program's serialized step, so no rebind lands during it. */
-export type WithBound = <T>(read: (bound: Conversation) => Promise<T>) => Promise<T>;
+/** `abandon` ends every read in flight with REWOUND; the program calls it when a rebind starts. */
+export type OwnerReads = { readonly socket: string; abandon(): void; close(): Promise<void> };
+/** The program's bound conversation now, and its rebind generation (odd while a rebind runs). */
+export type BoundNow = { generation(): number; conversation(): Conversation };
 
 /** Limits of one connection, in bytes and milliseconds from the moment the phase starts. */
 export type ReadLimits = {
@@ -45,15 +47,16 @@ export const READ_LIMITS: ReadLimits = {
  * past the macOS socket path limit, so the path lives in the owner record) and answer one `entries` request per
  * connection. Throws if the socket cannot be created; the program then runs without it (program.ts).
  */
-export async function serveOwnerReads(store: string, withBound: WithBound, context: Context, limits: ReadLimits = READ_LIMITS): Promise<OwnerReads> {
+export async function serveOwnerReads(store: string, bound: BoundNow, context: Context, limits: ReadLimits = READ_LIMITS): Promise<OwnerReads> {
 	// mkdtemp makes the folder 0700 before the socket exists, so no other user can reach the socket at any moment.
 	const folder = mkdtempSync(join(tmpdir(), "pi-durable-"));
 	const socketPath = join(folder, "read.sock");
 	const open = new Set<Socket>();
+	const inFlight = new Set<() => void>();
 	const server = createServer((socket) => {
 		open.add(socket);
 		socket.on("close", () => open.delete(socket));
-		answerOne(socket, store, withBound, context, limits);
+		answerOne(socket, store, bound, inFlight, context, limits);
 	});
 	server.maxConnections = limits.connections;
 	try {
@@ -67,6 +70,9 @@ export async function serveOwnerReads(store: string, withBound: WithBound, conte
 	}
 	return {
 		socket: socketPath,
+		abandon: () => {
+			for (const end of [...inFlight]) end();
+		},
 		close: () =>
 			new Promise<void>((resolve) => {
 				server.close(() => resolve());
@@ -78,7 +84,7 @@ export async function serveOwnerReads(store: string, withBound: WithBound, conte
 }
 
 /** Read one request line within the byte limit and deadline, answer it within the reply deadline, and close. */
-function answerOne(socket: Socket, store: string, withBound: WithBound, context: Context, limits: ReadLimits): void {
+function answerOne(socket: Socket, store: string, bound: BoundNow, inFlight: Set<() => void>, context: Context, limits: ReadLimits): void {
 	const chunks: Buffer[] = [];
 	let received = 0;
 	let answered = false;
@@ -86,7 +92,10 @@ function answerOne(socket: Socket, store: string, withBound: WithBound, context:
 	let deadline = setTimeout(() => socket.destroy(), limits.requestTimeoutMs);
 	socket.on("close", () => clearTimeout(deadline));
 	socket.on("error", () => socket.destroy());
+	let replied = false;
 	const reply = (message: ProgramMessage) => {
+		if (replied) return;
+		replied = true;
 		if (!socket.destroyed) socket.end(encode(message));
 	};
 	socket.on("data", (chunk: Buffer) => {
@@ -106,8 +115,14 @@ function answerOne(socket: Socket, store: string, withBound: WithBound, context:
 		deadline = setTimeout(() => socket.destroy(), limits.replyTimeoutMs);
 		const request = parseRequest(Buffer.concat(chunks).toString("utf8"));
 		if ("error" in request) return reply({ kind: "error", code: "BAD_REQUEST", message: request.error });
-		withBound((bound) => readPage(store, bound, request.params, context, limits, request.id)).then(
-			(page) => reply({ kind: "result", id: request.id, value: page }),
+		const rewound = () => reply({ kind: "error", id: request.id, code: "REWOUND", message: "the thread was rewound during the read; read it again" });
+		const began = bound.generation();
+		if (began % 2 === 1) return rewound();
+		// Abandoned at a rebind, or by a reader that left: the read's own work is not awaited by anything.
+		inFlight.add(rewound);
+		socket.on("close", () => inFlight.delete(rewound));
+		readPage(store, bound.conversation(), request.params, context, limits, request.id).then(
+			(page) => (bound.generation() === began ? reply({ kind: "result", id: request.id, value: page }) : rewound()),
 			(error: unknown) =>
 				reply({
 					kind: "error",
@@ -115,7 +130,7 @@ function answerOne(socket: Socket, store: string, withBound: WithBound, context:
 					code: error instanceof ReadRefused ? error.code : "FAILED",
 					message: error instanceof Error ? error.message : String(error),
 				}),
-		);
+		).finally(() => inFlight.delete(rewound));
 	});
 }
 

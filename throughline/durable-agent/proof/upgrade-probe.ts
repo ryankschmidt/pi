@@ -1,4 +1,4 @@
-// Build rounds 12 to 14 probe on this Mac (Design brief 5; Rereview11-1 #2, 11-3 #1, 13-1 #1/#2, 13-2 #1, 13-3 #1/#2): one
+// Build rounds 12 to 15 probe on this Mac (Design brief 5; Rereview11-1 #2, 11-3 #1, 13-1 #1/#2, 13-2 #1, 13-3 #1/#2): one
 // disposable store taken through the real installed old agent program, an upgrade to this program, a rewind, a crash,
 // a clean stop, and a rollback to the old program, running and then stopped. Show-me's real CLI (Tier 1 build) runs
 // through each program's own command tool, as a skill body tells the model to, and from outside any agent. The old
@@ -39,13 +39,13 @@ let serial = 0;
 /** show-me build on `path` asked to quote `newest`; through the program's command tool when given, else from outside any agent. The phrase is found only if the read holds that turn. */
 const build = async (program: AgentProgram | undefined, path: string, newest: string) => {
 	const out = join(root, `page-${++serial}.html`);
-	const command = `node ${SHOW_ME} build ${spec} --transcript ${path} --words "${newest}" --out ${out} > ${out}.log 2>&1; echo "exit=$?"; grep -q "legacy Pi Durable" ${out}.log && echo "label=legacy"; grep -m1 -oE "agent isn.t running|run by an older agent program now|still starting" ${out}.log; if [ -f ${out} ]; then grep -q "picked from this thread" ${out} && echo "newest turn NOT found (picked)" || echo "newest turn found: ${newest}"; else echo "no page"; fi; echo "words=$(grep -oE '${WORDS}' ${out} 2>/dev/null | sort -u | tr '\\n' '|')"; true`;
+	const command = `node ${SHOW_ME} build ${spec} --transcript ${path} --words "${newest}" --out ${out} > ${out}.log 2>&1; echo "exit=$?"; grep -q "legacy Pi Durable" ${out}.log && echo "label=legacy"; grep -m1 -oE "agent isn.t running|current agent is not running|still starting" ${out}.log; if [ -f ${out} ]; then grep -q "picked from this thread" ${out} && echo "newest turn NOT found (picked)" || echo "newest turn found: ${newest}"; else echo "no page"; fi; echo "words=$(grep -oE '${WORDS}' ${out} 2>/dev/null | sort -u | tr '\\n' '|')"; true`;
 	if (program === undefined) return execFileSync("bash", ["-c", command], { encoding: "utf8" }).replace(/\s+/g, " ").trim();
 	await turn(program, `bash: ${command}`, `b${serial}`);
 	return (await lastBash(program)).replace(/\s+/g, " ").trim();
 };
 const review = () =>
-	execFileSync("bash", ["-c", `node ${SHOW_ME} review ${store} --out ${join(root, `review-${++serial}`)} > ${root}/review.log 2>&1; echo "exit=$?"; grep -m1 -oE "agent isn.t running|run by an older agent program now" ${root}/review.log; true`], { encoding: "utf8" })
+	execFileSync("bash", ["-c", `node ${SHOW_ME} review ${store} --out ${join(root, `review-${++serial}`)} > ${root}/review.log 2>&1; echo "exit=$?"; grep -m1 -oE "agent isn.t running|current agent is not running" ${root}/review.log; true`], { encoding: "utf8" })
 		.replace(/\s+/g, " ")
 		.trim();
 const run = async (fixture: string, label: string, work: (program: AgentProgram) => Promise<void>, kill = false) => {
@@ -64,6 +64,13 @@ await run(OLD, "1. installed old agent program", async (program) => {
 	console.log(`inside its turn: ${await build(program, join(store, "transcript.jsonl"), "Old choice.")}`);
 	console.log(`from outside (never marked): ${await build(undefined, join(store, "transcript.jsonl"), "Old choice.")}`);
 });
+// Round 15 (Rereview14-1 #1, 14-3 #2): an upgrade that fails after its socket is serving leaves the old store read as today.
+{
+	const failing = startProgram(process.execPath, [NEW, store, root, join(root, "no-such-session.jsonl")]);
+	await failing.hello.catch(() => undefined);
+	await failing.exited;
+	console.log(`-- 1b. upgrade attempt fails while carrying a missing file: marked ${marked()}; from outside: ${await build(undefined, join(store, "transcript.jsonl"), "Old choice.")}`);
+}
 const before = readFileSync(join(store, "transcript.jsonl"), "utf8");
 await run(
 	NEW,

@@ -25,7 +25,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { Binding } from "./binding.ts";
 import { carrySession } from "./carry.ts";
 import { lockStore, markStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
-import { type OwnerReads, serveOwnerReads, type WithBound } from "./owner-read.ts";
+import { type BoundNow, type OwnerReads, serveOwnerReads } from "./owner-read.ts";
 import { reapLeftovers, startReaper } from "./reaper.ts";
 import {
 	type Call,
@@ -142,10 +142,10 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 	 * The read socket is an add-on: if it cannot be created the agent runs on, the owner record says reads are unavailable
 	 * and why (show-me refuses with that reason instead of reading anything), the thread's prompt says so, and it is logged.
 	 */
-	async function startReads(withBound: WithBound): Promise<OwnerReads | undefined> {
+	async function startReads(bound: BoundNow): Promise<OwnerReads | undefined> {
 		let started: OwnerReads | undefined;
 		try {
-			started = await serveOwnerReads(options.storeDir, withBound, context);
+			started = await serveOwnerReads(options.storeDir, bound, context);
 			await lock.setReads({ state: "ready", socket: started.socket });
 			return started;
 		} catch (error) {
@@ -170,21 +170,19 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		if (binding?.agentId != null && binding.agentId !== options.agentId) {
 			throw new Error(`STORE_BINDING_MISMATCH: store belongs to agent ${binding.agentId}`);
 		}
-		// Marked only once the store opened and is this agent's, before this program commits anything to it: a start that
-		// fails earlier leaves an older agent's store as it was (lock.ts, OWNER_READS_MARKER).
-		await markStore(options.storeDir);
-		// Socket reads and rebinds run one at a time (owner-read.ts): a read sees the binding before a rewind or after it.
-		let step: Promise<unknown> = Promise.resolve();
-		const serialized = <T>(work: () => Promise<T>): Promise<T> => {
-			const run = step.then(work, work);
-			step = run.catch(() => undefined);
-			return run;
-		};
-		const rebind = (next: Conversation) =>
-			serialized(async () => {
+		// A rewind never waits on a read (owner-read.ts): the rebind generation is odd while a rebind runs and moves on at its
+		// start and end; reads in flight are abandoned with REWOUND, and a read whose generation moved is never answered.
+		let generation = 0;
+		const rebind = async (next: Conversation) => {
+			generation++;
+			reads?.abandon();
+			try {
 				await bind(next.id);
 				conversation = next;
-			});
+			} finally {
+				generation++;
+			}
+		};
 		let conversation: Conversation;
 		if (binding?.conversationId != null) {
 			const found = await opened.conversation(binding.conversationId as ConversationId, context);
@@ -201,6 +199,8 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				stored.conversationId = id;
 			}, context);
 		}
+		// Before resume and before carrying: the socket is serving (or recorded unavailable) before anything else can fail late.
+		reads = await startReads({ generation: () => generation, conversation: () => conversation });
 		if (options.carryFrom !== undefined) {
 			const summary = await carrySession(opened, conversation, options.carryFrom, options.storeDir, context);
 			log(`carried ${JSON.stringify(summary.carried)} from ${summary.path} (${summary.alreadyCarried} already carried)`);
@@ -231,8 +231,9 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				params.cursor as never,
 				context,
 			);
-		// Before resume: no command a turn runs can start before the owner record says whether reads are ready.
-		reads = await startReads((read) => serialized(() => read(conversation)));
+		// The agent has fully started and its socket is serving: only now is the store marked, just before it can serve a
+		// turn or a rewind, so a start that fails at any earlier step leaves an older agent's store read exactly as today.
+		await markStore(options.storeDir);
 		opened.resume();
 
 		send(helloFor(conversation));
