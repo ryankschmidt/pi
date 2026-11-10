@@ -31,10 +31,10 @@ function fakeFork(): string {
 const IMAGE_TOOLS = ["generate_image", "edit_image", "inspect_image"];
 
 /** A stand-in for the shipped subscription-images folder exporting the contract for `tools` (all three by default). */
-function fakeImageModule(tools: string[] = IMAGE_TOOLS): string {
+function fakeImageModule(tools: string[] = IMAGE_TOOLS, schemas: Record<string, unknown> = {}): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-images-"));
 	const descriptions = Object.fromEntries(tools.map((name) => [name, `The ${name} tool`]));
-	const parameters = Object.fromEntries(tools.map((name) => [name, { type: "object", properties: {} }]));
+	const parameters = Object.fromEntries(tools.map((name) => [name, schemas[name] ?? { type: "object", properties: {} }]));
 	writeFileSync(
 		join(dir, "shared.mjs"),
 		`export const imageToolDescriptions = ${JSON.stringify(descriptions)};\nexport const imageToolParameters = ${JSON.stringify(parameters)};\n`,
@@ -93,7 +93,7 @@ test("the image module is pinned inside the install: missing or incompatible ref
 	const wrong = mkdtempSync(join(tmpdir(), "pi-images-wrong-"));
 	writeFileSync(join(wrong, "shared.mjs"), "export const unrelated = 1;\n");
 	writeFileSync(join(wrong, "effects.mjs"), "export const alsoUnrelated = 2;\n");
-	await assert.rejects(install(fork, runtime, null, { imageModule: wrong, showMe }), /imageToolDescriptions is not an object\); current is unchanged/);
+	await assert.rejects(install(fork, runtime, null, { imageModule: wrong, showMe }), /imageToolDescriptions is not an object\); the new copy is left unused at .*; current is unchanged/);
 	assert.equal(existsSync(join(runtime, "current")), false);
 
 	const imageModule = fakeImageModule();
@@ -105,10 +105,27 @@ test("the image module is pinned inside the install: missing or incompatible ref
 	// A copy missing any one of the three tools is refused and the installed version stays current.
 	for (const lacking of IMAGE_TOOLS) {
 		const partial = fakeImageModule(IMAGE_TOOLS.filter((name) => name !== lacking));
-		await assert.rejects(install(fork, runtime, null, { imageModule: partial, showMe }), new RegExp(`the copy lacks ${lacking}\\); current is unchanged`));
+		await assert.rejects(install(fork, runtime, null, { imageModule: partial, showMe }), new RegExp(`the copy lacks ${lacking}\\); the new copy is left unused`));
 		assert.equal(readPin(runtime)?.id, pin.id, `current is unchanged after a copy without ${lacking}`);
 	}
 	await assert.rejects(install(fork, runtime, null, { imageModule: fakeImageModule([...IMAGE_TOOLS, "erase_image"]), showMe }), /does not know: erase_image/);
+	// Nested schemas are checked whole: an unknown type and a string `required` compile in pi's schema compiler, a
+	// property given as a number does not; all three are refused before current moves.
+	const nested: [unknown, RegExp][] = [
+		[{ type: "object", properties: { prompt: { type: "not-a-json-schema-type" } } }, /properties\.prompt has type "not-a-json-schema-type"/],
+		[{ type: "object", properties: { prompt: { type: "string" } }, required: "prompt" }, /required is not a list of names/],
+		[{ type: "object", properties: { prompt: 5 } }, /properties\.prompt is neither a schema object nor a boolean/],
+	];
+	for (const [schema, reason] of nested) {
+		await assert.rejects(install(fork, runtime, null, { imageModule: fakeImageModule(IMAGE_TOOLS, { generate_image: schema }), showMe }), reason);
+		assert.equal(readPin(runtime)?.id, pin.id);
+	}
+	// The check runs on the copied files: this source loads only beside a file the install does not copy.
+	const leaning = fakeImageModule();
+	writeFileSync(join(leaning, "helper.mjs"), "export const ready = true;\n");
+	writeFileSync(join(leaning, "effects.mjs"), 'import "./helper.mjs";\nexport const runImageTool = () => undefined;\n');
+	await assert.rejects(install(fork, runtime, null, { imageModule: leaning, showMe }), /did not load .*helper\.mjs[\s\S]*current is unchanged/);
+	assert.equal(readPin(runtime)?.id, pin.id);
 
 	writeFileSync(join(imageModule, "effects.mjs"), "export const runImageTool = () => 'newer';\n");
 	assert.ok(check(runtime, imageModule, showMe).problems.includes("image module pinned older than shipped; the next agent install picks it up"));

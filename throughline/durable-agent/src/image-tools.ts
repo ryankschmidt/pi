@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Context, JsonValue } from "@earendil-works/chord";
+import { compile, type JsonSchema } from "@earendil-works/pi-schema";
 import {
 	defineExtension,
 	defineTool,
@@ -88,6 +89,10 @@ function toolsOf(exports: Record<string, unknown>, defaultCwd: string): ToolRegi
 		const schema = parameters[name];
 		if (typeof description !== "string" || description.length === 0) throw new Error(`${name} has no description`);
 		if (!isRecord(schema) || schema.type !== "object" || !isRecord(schema.properties)) throw new Error(`${name} has no object parameter schema`);
+		schemaProblem(schema, name);
+		// Pi's compiler throws on some malformed schemas but accepts others (an unknown type, a string required), so the
+		// walk above refuses those first; providers check tool schemas on every request, so one bad schema breaks them all.
+		compile(schema as JsonSchema);
 		return defineTool({
 			name,
 			description,
@@ -99,6 +104,31 @@ function toolsOf(exports: Record<string, unknown>, defaultCwd: string): ToolRegi
 			},
 		} as never);
 	});
+}
+
+const JSON_TYPES: ReadonlySet<string> = new Set(["object", "array", "string", "number", "integer", "boolean", "null"]);
+
+/** Throws at the first part of a JSON Schema tree a provider would reject; `at` names it in the reason. */
+function schemaProblem(schema: Record<string, unknown>, at: string): void {
+	const { type, required, properties, items, additionalProperties } = schema;
+	const types = Array.isArray(type) ? type : type === undefined ? [] : [type];
+	if (types.some((one) => typeof one !== "string" || !JSON_TYPES.has(one))) throw new Error(`${at} has type ${JSON.stringify(type)}, not a JSON type`);
+	if (properties !== undefined && !isRecord(properties)) throw new Error(`${at}.properties is not an object`);
+	if (required !== undefined) {
+		if (!Array.isArray(required) || required.some((name) => typeof name !== "string")) throw new Error(`${at}.required is not a list of names`);
+		const unknown = required.filter((name) => !isRecord(properties) || !(name in properties));
+		if (unknown.length > 0) throw new Error(`${at}.required names ${unknown.join(", ")}, which it does not define`);
+	}
+	const children: [string, unknown][] = [
+		...Object.entries(isRecord(properties) ? properties : {}).map(([key, value]): [string, unknown] => [`${at}.properties.${key}`, value]),
+		...(items === undefined ? [] : [[`${at}.items`, items] as [string, unknown]]),
+		...(additionalProperties === undefined ? [] : [[`${at}.additionalProperties`, additionalProperties] as [string, unknown]]),
+	];
+	for (const [path, child] of children) {
+		if (typeof child === "boolean") continue;
+		if (!isRecord(child)) throw new Error(`${path} is neither a schema object nor a boolean`);
+		schemaProblem(child, path);
+	}
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

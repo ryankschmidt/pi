@@ -14,14 +14,12 @@ import {
 	type ConversationId,
 	type ConversationWatch,
 	defineDoc,
-	type EntryDraft,
 	type EntryId,
 	Harness,
 	type HarnessOptions,
 	type SubmissionDraft,
 	type SubmissionId,
 	type TaskId,
-	type UserInput,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { carrySession } from "./carry.ts";
@@ -94,11 +92,6 @@ export type ProgramOptions = {
 	reap?: boolean;
 	/** Called once the program has stopped, with its exit code. */
 	onExit?: (code: number) => void;
-	/**
-	 * An entry to store just before a submitted input, given the conversation's working folder; the input itself is
-	 * stored as typed (skill commands store their exact expansion this way, see skill-commands.ts).
-	 */
-	recordBeforeInput?: (content: UserInput, cwd: string | undefined) => EntryDraft | undefined;
 };
 
 export const EXIT = { ok: 0, failed: 1, alreadyOwned: 3, protocol: 4 } as const;
@@ -169,6 +162,8 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			const found = await opened.conversation(binding.conversationId as ConversationId, context);
 			if (found === undefined) throw new Error("BOUND_CONVERSATION_MISSING");
 			conversation = found;
+			// Every start projects the stored binding, so a crash between a fork and its binding line leaves this as the last.
+			transcript?.bound(conversation.id);
 		} else {
 			conversation = await opened.root(context, { agent: options.initialAgent });
 			await bind(conversation.id);
@@ -179,6 +174,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				stored.agentId = options.agentId;
 				stored.conversationId = id;
 			}, context);
+			transcript?.bound(id);
 		}
 		if (options.carryFrom !== undefined) {
 			const summary = await carrySession(opened, conversation, options.carryFrom, options.storeDir, context);
@@ -227,16 +223,6 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 									...(params.whenIdle === undefined ? {} : { whenIdle: params.whenIdle }),
 								}
 					) as SubmissionDraft;
-					const record =
-						draft.type === "input" && options.recordBeforeInput
-							? options.recordBeforeInput(draft.content, (await conversation.agent(context)).cwd)
-							: undefined;
-					if (record !== undefined) {
-						// A data-only write is stored at once, even while a run is busy, so it always precedes its input. A
-						// repeated request id repeats neither the record nor the input.
-						const requestId = typeof params.requestId === "string" ? `${params.requestId}:record` : undefined;
-						await conversation.submit({ type: "write", entry: record, ...(requestId === undefined ? {} : { requestId }) }, context);
-					}
 					const submission = await conversation.submit(draft, context);
 					return { submissionId: submission.id };
 				}

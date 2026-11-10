@@ -26,7 +26,6 @@ import {
 	ModelRuntime,
 	SettingsManager,
 } from "./setup.ts";
-import { skillCommandEntry } from "./skill-commands.ts";
 import {
 	Approvals,
 	createApprovalsExtension,
@@ -68,7 +67,7 @@ const descriptors: ToolDescriptor[] = values.tools ? JSON.parse(readFileSync(res
 const tools = createThroughLineToolsExtension(descriptors, toolLink);
 const resources = new AgentResources(settings, cwd, join(resolve(values.store), "transcript.jsonl"));
 if (!existsSync(join(PINNED_SKILLS_DIR, "show-me/SKILL.md"))) {
-	log(`skill commands: no pinned show-me at ${join(PINNED_SKILLS_DIR, "show-me/SKILL.md")}; /show-me expands only if pi's skills list it`);
+	log(`skill commands: no pinned show-me at ${join(PINNED_SKILLS_DIR, "show-me/SKILL.md")}; /show-me is listed as a command only if pi's skills list it`);
 }
 const images = await loadImageTools(cwd);
 if (images.missing !== undefined) log(images.missing);
@@ -106,8 +105,6 @@ const code = await runProgram({
 	tools: toolLink,
 	...(values["carry-from"] ? { carryFrom: resolve(values["carry-from"]) } : {}),
 	reap: true,
-	// A skill command stores its exact expansion beside the typed message at submission; requests replay the stored text.
-	recordBeforeInput: (content, conversationCwd) => skillCommandEntry(content, resources.folder(conversationCwd ?? cwd).skills),
 	input: process.stdin,
 	output: process.stdout,
 	log,

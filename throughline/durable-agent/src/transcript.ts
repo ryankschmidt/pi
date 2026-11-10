@@ -1,19 +1,25 @@
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, truncateSync } from "node:fs";
 import type { Context } from "@earendil-works/chord";
 import type { ConversationRecord, EntryRecord, Harness } from "@earendil-works/pi-durable";
 
 // transcript.jsonl: one append-only file per agent, beside the store. One line per stored entry and one per new
-// conversation (a fork names its parent conversation and entry), in commit order, every branch included. Durable never
-// reads it back, so it cannot change the store. Readers find the live branch by walking parents from the newest
-// conversation.
+// conversation (a fork names its parent conversation and entry), in commit order, every branch included, and a binding
+// line each time the thread is bound to a conversation and at every start. Durable never reads it back, so it cannot
+// change the store. Readers take the live conversation from the last binding line and walk its fork parents.
 
 export type TranscriptLine =
 	| { seq: number | null; conversation: ConversationRecord }
-	| { seq: number | null; entry: EntryRecord };
+	| { seq: number | null; entry: EntryRecord }
+	| { seq: null; binding: { conversationId: number } };
+
+/** A line projecting a stored record, as opposed to a binding line. */
+type StoreLine = Exclude<TranscriptLine, { binding: unknown }>;
 
 export type TranscriptWriter = {
 	/** Entry and conversation ids already in the file. */
 	readonly written: { entries: Set<number>; conversations: Set<number> };
+	/** Append a binding line: the thread now shows this conversation. */
+	bound(conversationId: number): void;
 	detach(): void;
 };
 
@@ -42,10 +48,11 @@ function readWritten(path: string): { entries: Set<number>; conversations: Set<n
  */
 export async function attachTranscript(harness: Harness, path: string, context: Context): Promise<TranscriptWriter> {
 	const written = readWritten(path);
-	// A cut-off last line ends without a newline; start the next record on a fresh line.
+	// Only the program holding the store lock writes this file, so a kill can tear only its last line. Cut the fragment
+	// off; the catch-up below writes that record again, and every line of the file parses.
 	if (existsSync(path)) {
-		const text = readFileSync(path, "utf8");
-		if (text.length > 0 && !text.endsWith("\n")) appendFileSync(path, "\n");
+		const bytes = readFileSync(path);
+		if (bytes.length > 0 && bytes[bytes.length - 1] !== 0x0a) truncateSync(path, bytes.lastIndexOf(0x0a) + 1);
 	}
 	const append = (line: TranscriptLine) => appendFileSync(path, `${JSON.stringify(line)}\n`);
 	const writeConversation = (seq: number | null, conversation: ConversationRecord) => {
@@ -84,7 +91,7 @@ export async function attachTranscript(harness: Harness, path: string, context: 
 		return { conversations, entries };
 	}, context);
 	// Entry ids are Session-global and ordered, so id order is commit order.
-	const records: TranscriptLine[] = [
+	const records: StoreLine[] = [
 		...missing.conversations.map((conversation) => ({ seq: null, conversation })),
 		...missing.entries.map((entry) => ({ seq: null, entry })),
 	].sort((a, b) => firstEntryId(a) - firstEntryId(b));
@@ -104,11 +111,15 @@ export async function attachTranscript(harness: Harness, path: string, context: 
 		},
 		end() {},
 	});
-	return { written, detach: () => observation.detach() };
+	return {
+		written,
+		bound: (conversationId) => append({ seq: null, binding: { conversationId: Number(conversationId) } }),
+		detach: () => observation.detach(),
+	};
 }
 
 /** A conversation sorts just before its first own entry: a fork right after the entry it starts from. */
-function firstEntryId(line: TranscriptLine): number {
+function firstEntryId(line: StoreLine): number {
 	if ("entry" in line) return Number(line.entry.id);
 	return line.conversation.parent ? Number(line.conversation.parent.at) + 0.5 : 0;
 }

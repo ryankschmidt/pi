@@ -4,7 +4,7 @@
 // module and the pinned show-me skill are found where an install puts them. Pi's settings are shaped like Ryan's: they
 // list no show-me skill.
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -156,7 +156,7 @@ async function turn(program: AgentProgram, content: string, requestId: string): 
 	return ((await program.call("wait", { submissionId })) as { status: string }).status;
 }
 
-type Stored = { kind: string; id: number; model?: { role: string; content: unknown }[]; data?: Record<string, string> };
+type Stored = { kind: string; id: number; model?: { role: string; content: unknown }[] };
 /** The entries the agent stored, read from its transcript projection: what ThroughLine and show-me read. */
 const storedEntries = (root: string): Stored[] =>
 	readFileSync(join(root, "store/transcript.jsonl"), "utf8")
@@ -204,73 +204,70 @@ test("the prompt carries APPEND_SYSTEM.md once, the project context and Pi and D
 	await stop(program);
 });
 
-test("/show-me and /skill:show-me expand through the pinned skill with pi's settings listing no show-me; unknown commands stay as typed", { timeout: 60_000 }, async () => {
+test("show-me is listed as a command with the read-first rule, with pi's settings listing no show-me; a command reaches the model as typed", { timeout: 60_000 }, async () => {
 	const model = await modelEndpoint([{ text: "ok" }]);
-	const program = layout(model.port, { images: "none" }).start();
+	const setup = layout(model.port, { images: "none" });
+	const program = setup.start();
 	await program.hello;
-	const cases: [string, RegExp][] = [
-		["/show-me the next step", /^<skill name="show-me" location="[^"]+SKILL\.md">\nReferences are relative to [^\n]+\n\n[\s\S]+\n<\/skill>\n\nthe next step$/],
-		["/skill:show-me", /^<skill name="show-me" location="[^"]+SKILL\.md">[\s\S]+<\/skill>$/],
-		["/skill:no-such-skill go", /^\/skill:no-such-skill go$/],
-	];
-	for (const [index, [typed, expected]] of cases.entries()) {
-		assert.equal(await turn(program, typed, `s${index}`), "done", program.stderr());
-		assert.match(userTexts(model.bodies.at(-1) as RequestBody).at(-1) ?? "", expected, typed);
-	}
+	assert.equal(await turn(program, "/show-me the next step", "s1"), "done", program.stderr());
+	const system = systemText(model.bodies[0] as RequestBody);
+	const commands = /<available_commands>([\s\S]*?)<\/available_commands>/.exec(system)?.[1] ?? "";
+	assert.match(commands, /<name>show-me<\/name>/);
+	assert.ok(commands.includes(`<location>${realpathSync(setup.showMe)}</location>`), "the pinned show-me file is the listed location");
+	assert.match(system, /read that file with read before anything else[\s\S]*where the file says \$ARGUMENTS, use that text/);
+	assert.match(system, /<available_skills>[\s\S]*<name>other<\/name>/, "model-callable skills are listed as before");
+	assert.equal(userTexts(model.bodies[0] as RequestBody).at(-1), "/show-me the next step", "the command reaches the model as typed");
 	await stop(program);
 });
 
-test("a skill command keeps the instructions it was submitted with after the skill file changes and the program restarts", { timeout: 90_000 }, async () => {
-	const model = await modelEndpoint([{ text: "ok" }]);
+test("a command's skill body is the read result stored in its run: replayed unchanged after a skill edit, a restart and a fork", { timeout: 90_000 }, async () => {
+	// The endpoint reads its replies when each request arrives, so the first one can name the file once it exists.
+	const replies: Reply[] = [{ text: "unset" }, { text: "shown" }];
+	const model = await modelEndpoint(replies);
 	const setup = layout(model.port, { images: "none" });
-	writeFileSync(setup.showMe, "---\nname: show-me\ndescription: Show.\ndisable-model-invocation: true\n---\nBODY-AS-SUBMITTED\n");
+	writeFileSync(setup.showMe, "---\nname: show-me\ndescription: Show.\ndisable-model-invocation: true\n---\nBODY-AS-READ\n");
+	// The scripted model reads the listed file, as the prompt rule asks.
+	replies[0] = { tool: "read", args: { path: realpathSync(setup.showMe) } };
 	const first = setup.start();
 	await first.hello;
 	assert.equal(await turn(first, "/show-me the plan", "k1"), "done", first.stderr());
+	assert.match(JSON.stringify(model.bodies[1]?.messages), /BODY-AS-READ/, "the next request carries the body as a tool result");
 	await stop(first);
 
-	// The skill is edited (a new ship) and the agent restarts on the same store; the next turn resends history.
+	// One stored record of the turn, as typed; nothing else stands in for it.
+	assert.deepEqual(storedUserTexts(setup.root), ["/show-me the plan"]);
+	assert.equal(storedEntries(setup.root).filter((entry) => !entry.kind.startsWith("pi.")).length, 0, "no record outside Durable's own kinds");
+
 	writeFileSync(setup.showMe, "---\nname: show-me\ndescription: Show.\ndisable-model-invocation: true\n---\nBODY-AFTER-EDIT\n");
 	const second = setup.start();
 	await second.hello;
 	assert.equal(await turn(second, "and now?", "k2"), "done", second.stderr());
-	const history = userTexts(model.bodies.at(-1) as RequestBody);
-	assert.equal(history.length, 2, JSON.stringify(history));
-	assert.match(history[0] ?? "", /BODY-AS-SUBMITTED[\s\S]*the plan$/, "the first turn replays what it was submitted with");
-	assert.doesNotMatch(history.join("\n"), /BODY-AFTER-EDIT/);
-	// Stored: the user's message as typed (what ThroughLine's snapshot, fork carry and show-me read), and beside it a
-	// data-only record of the exact expansion, which is what the model was sent.
-	assert.deepEqual(storedUserTexts(setup.root), ["/show-me the plan", "and now?"]);
-	const records = storedEntries(setup.root).filter((entry) => entry.kind === "throughline.skill-command");
-	assert.equal(records.length, 1);
-	assert.equal(records[0]?.model, undefined, "the record never enters model context itself");
-	assert.equal(records[0]?.data?.typed, "/show-me the plan");
-	assert.match(records[0]?.data?.expanded ?? "", /BODY-AS-SUBMITTED[\s\S]*the plan$/);
+	const resent = JSON.stringify(model.bodies.at(-1)?.messages);
+	assert.match(resent, /BODY-AS-READ/, "the restart resends the stored read result");
+	assert.doesNotMatch(resent, /BODY-AFTER-EDIT/);
+	assert.equal(userTexts(model.bodies.at(-1) as RequestBody)[0], "/show-me the plan");
 
-	// A fork at the answer keeps the stored expansion for the earlier turn.
-	const answer = storedEntries(setup.root).find((entry) => entry.kind === "pi.assistant");
+	const answer = storedEntries(setup.root).find((entry) => entry.kind === "pi.assistant" && JSON.stringify(entry.model).includes("shown"));
 	await second.call("fork", { entryId: answer?.id });
 	assert.equal(await turn(second, "in the fork", "k3"), "done", second.stderr());
-	const forked = userTexts(model.bodies.at(-1) as RequestBody);
-	assert.match(forked[0] ?? "", /BODY-AS-SUBMITTED[\s\S]*the plan$/, "the fork replays the stored expansion");
-	assert.equal(forked.at(-1), "in the fork");
+	const forked = JSON.stringify(model.bodies.at(-1)?.messages);
+	assert.match(forked, /BODY-AS-READ/, "the fork resends the stored read result");
+	assert.doesNotMatch(forked, /BODY-AFTER-EDIT/);
 	await stop(second);
 });
 
 test("the pinned show-me wins over same-named skills in pi's default, project and configured skills", { timeout: 60_000 }, async () => {
 	const model = await modelEndpoint([{ text: "ok" }]);
 	const setup = layout(model.port, { images: "none", sameNamedShowMe: true });
-	writeFileSync(setup.showMe, "---\nname: show-me\ndescription: Show.\ndisable-model-invocation: true\n---\nPINNED-BODY\n");
 	const program = setup.start();
 	await program.hello;
-	for (const [index, typed] of ["/show-me x", "/skill:show-me y"].entries()) {
-		assert.equal(await turn(program, typed, `c${index}`), "done", program.stderr());
-		const sent = userTexts(model.bodies.at(-1) as RequestBody).at(-1) ?? "";
-		assert.match(sent, /PINNED-BODY/, typed);
-		assert.doesNotMatch(sent, /RIVAL-/, typed);
-	}
-	// The rival is model-callable, so it would be listed for the model; the pinned command-only skill replaces it.
-	assert.doesNotMatch(systemText(model.bodies.at(-1) as RequestBody), /A rival show-me/);
+	assert.equal(await turn(program, "/skill:show-me y", "c1"), "done", program.stderr());
+	const system = systemText(model.bodies.at(-1) as RequestBody);
+	const listed = [...system.matchAll(/<name>show-me<\/name>/g)].length;
+	assert.equal(listed, 1, "show-me is listed once");
+	assert.ok(system.includes(`<location>${realpathSync(setup.showMe)}</location>`), "the listed show-me is the pinned file");
+	// The rivals are model-callable, so they would be listed under available_skills; the pinned copy replaces them.
+	assert.doesNotMatch(system, /A rival show-me|RIVAL-/);
 	await stop(program);
 });
 
@@ -294,6 +291,7 @@ test("an absent, unloadable or incompatible image module never stops the agent: 
 		["exports the wrong names", { shared: "export const unrelated = 1;\n", effects: "export const other = 2;\n" }, /does not provide usable image tools \(imageToolDescriptions is not an object\)/],
 		["lacks two of the three tools", imageCopy(["inspect_image"]), /the copy lacks generate_image, edit_image/],
 		["a tool without an object schema", imageCopy(["generate_image", "edit_image", "inspect_image"], { inspect_image: { type: "object" } }), /inspect_image has no object parameter schema/],
+		["a nested schema with an unknown type", imageCopy(["generate_image", "edit_image", "inspect_image"], { generate_image: { type: "object", properties: { prompt: { type: "not-a-json-schema-type" } } } }), /properties\.prompt has type "not-a-json-schema-type"/],
 		["an unknown extra tool, such as one named like a coding tool", imageCopy(["generate_image", "edit_image", "inspect_image", "read"]), /does not know: read/],
 	];
 	for (const [name, images, reason] of cases) {

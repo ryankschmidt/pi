@@ -57,7 +57,7 @@ const IMAGE_COPY = `${CAPABILITIES}/subscription-images`;
 const IMAGE_FILES = ["shared.mjs", "effects.mjs"];
 /**
  * The shipped show-me skill (Ship Warden's Tier 2 copy of show-me.md); each install pins it as a skill the program
- * loads, so `/show-me` and `/skill:show-me` expand in every Durable thread without an edit to pi's settings.
+ * loads, so `/show-me` and `/skill:show-me` are listed as commands in every Durable thread without an edit to pi's settings.
  */
 export const SHIPPED_SHOW_ME = join(HOME, "core-root/src/tools/show-me/show-me.md");
 const SHOW_ME_COPY = `${CAPABILITIES}/skills/show-me/SKILL.md`;
@@ -131,7 +131,7 @@ function skillProblem(file: string, name: string): string | undefined {
 	const { skills } = loadSkills({ cwd: dirname(file), agentDir: dirname(file), skillPaths: [file], includeDefaults: false });
 	const skill = skills.find((candidate) => candidate.name === name);
 	if (skill === undefined) return `pi's skill loader finds no skill named ${name} in ${file}`;
-	if (!skill.disableModelInvocation) return `${file} is not marked disable-model-invocation, so /${name} would not expand`;
+	if (!skill.disableModelInvocation) return `${file} is not marked disable-model-invocation, so /${name} would not be listed as a command`;
 	return undefined;
 }
 
@@ -155,19 +155,11 @@ export async function install(
 				"An install without it would give every new Pi thread no image tools. Ship subscription-images through Ship Warden, then install again.",
 		);
 	}
-	// The same check the agent runs at start: a copy that loads but exports the wrong things is refused here.
-	const imageProblem = await imageModuleProblem(imageModule);
-	if (imageProblem !== undefined) {
-		throw new Error(
-			`refused: ${imageProblem}; current is unchanged.\n` +
-				"An install with it would give every new Pi thread no image tools. Ship a working subscription-images through Ship Warden, then install again.",
-		);
-	}
 	const showMeProblem = skillProblem(showMe, "show-me");
 	if (showMeProblem !== undefined) {
 		throw new Error(
 			`refused: ${showMeProblem}; current is unchanged.\n` +
-				"An install without it would leave /show-me unexpanded in every new Durable thread. Ship show-me through Ship Warden, then install again.",
+				"An install without it would leave /show-me unlisted as a command in every new Durable thread. Ship show-me through Ship Warden, then install again.",
 		);
 	}
 	const dirty = git(from, "status", "--porcelain", "--untracked-files=no");
@@ -193,6 +185,15 @@ export async function install(
 	for (const name of IMAGE_FILES) execFileSync("cp", [join(imageModule, name), join(target, IMAGE_COPY, name)]);
 	mkdirSync(dirname(join(target, SHOW_ME_COPY)), { recursive: true });
 	execFileSync("cp", [showMe, join(target, SHOW_ME_COPY)]);
+	// The same check the agent runs at start, on the bytes this install will run: the copied files, not their source
+	// (a source that loads only beside files the install does not copy is refused here).
+	const imageProblem = await imageModuleProblem(join(target, IMAGE_COPY));
+	if (imageProblem !== undefined) {
+		throw new Error(
+			`refused: ${imageProblem}; the new copy is left unused at ${target}; current is unchanged.\n` +
+				"An install with it would give every new Pi thread no image tools. Ship a working subscription-images through Ship Warden, then install again.",
+		);
+	}
 	if (options.runTests) {
 		// The copy's own tests run inside the copy before anything points at it; a fold or rebuild that breaks the
 		// agent program is refused here and live threads keep the version they have.
@@ -270,7 +271,7 @@ export function check(runtime: string, imageModule = SHIPPED_IMAGE_MODULE, showM
 		facts.image_module_sha256 = pinned.sha256;
 		if (pinned.sha256 !== shipped.sha256) problems.push("image module pinned older than shipped; the next agent install picks it up");
 		const pinnedShowMe = join(versionDir, SHOW_ME_COPY);
-		if (!existsSync(pinnedShowMe)) problems.push("the install has no pinned show-me skill; /show-me does not expand in Durable threads");
+		if (!existsSync(pinnedShowMe)) problems.push("the install has no pinned show-me skill; /show-me is not listed as a command in Durable threads");
 		else if (existsSync(showMe) && !readFileSync(pinnedShowMe).equals(readFileSync(showMe))) {
 			problems.push("show-me skill pinned older than shipped; the next agent install picks it up");
 		}

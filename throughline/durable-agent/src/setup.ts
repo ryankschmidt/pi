@@ -35,7 +35,6 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { createSkillCommandsExtension } from "./skill-commands.ts";
 
 export { ModelRuntime, SettingsManager };
 
@@ -72,7 +71,7 @@ export type FolderResources = { contextFiles: { path: string; content: string }[
 
 /**
  * Skills pinned inside the installed program (show-me, copied by the installer from Ship Warden's shipped copy), so the
- * skill commands ThroughLine's menu offers expand without an edit to pi's settings. A pinned skill wins over any skill
+ * skill commands ThroughLine's menu offers are listed for the model without an edit to pi's settings. A pinned skill wins over any skill
  * of the same name in pi's default, project or configured skills: the install checked these bytes, the others it never saw.
  */
 export const PINNED_SKILLS_DIR = fileURLToPath(new URL("../capabilities/skills/", import.meta.url));
@@ -166,6 +165,33 @@ const DOCS = `Pi and Pi Durable documentation (read when working on the Pi harne
 - Before changing the harness or Pi Durable, read the relevant docs and examples in full, following related cross-references.
 - This agent runs on Pi Durable, not interactive pi: interactive pi's TUI, keybindings and themes do not apply to it.`;
 
+// Skill commands are ordinary text: the user's message is stored as typed, and the model opens the named skill's file
+// with read, so its body is a stored tool result of the run the message started. Stock pi's skill list leaves out
+// command-only skills (disable-model-invocation), so they are listed here with the rule that reads them.
+function commandsText(skills: readonly Skill[]): string {
+	const commands = skills.filter((skill) => skill.disableModelInvocation);
+	const lines = [
+		"When the user's message begins with /<name> for a command listed below, or /skill:<name> for any listed skill or command, read that file with read before anything else and follow it. The rest of the message is its arguments; where the file says $ARGUMENTS, use that text.",
+	];
+	if (commands.length > 0) {
+		lines.push("", "<available_commands>");
+		for (const command of commands) {
+			lines.push(
+				"  <command>",
+				`    <name>${escapeXml(command.name)}</name>`,
+				`    <description>${escapeXml(command.description)}</description>`,
+				`    <location>${escapeXml(command.filePath)}</location>`,
+				"  </command>",
+			);
+		}
+		lines.push("</available_commands>");
+	}
+	return commands.length > 0 || skills.length > 0 ? lines.join("\n") : "";
+}
+
+const escapeXml = (text: string) =>
+	text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+
 /** The program's system prompt as one Durable extension: preamble, tools, rules, addendum, context, skills, folder. */
 export function createPiPrompt(resources: AgentResources) {
 	const ownTools = (input: PromptInput) => input.agent.tools.map((tool) => tool.name).filter((name) => name in TOOL_LINES);
@@ -198,13 +224,14 @@ export function createPiPrompt(resources: AgentResources) {
 				].join("\n\n");
 			}),
 			section("skills", (input) => {
-				const text = formatSkillsForPrompt(resources.folder(resources.cwdOf(input)).skills, "read").trim();
+				const skills = resources.folder(resources.cwdOf(input)).skills;
+				const text = [formatSkillsForPrompt(skills, "read").trim(), commandsText(skills)].filter((part) => part.length > 0).join("\n\n");
 				return text.length > 0 ? text : undefined;
 			}),
 			section("transcript", () =>
 				resources.transcript === undefined
 					? undefined
-					: `This conversation's transcript (Pi Durable's projection of every stored entry, all branches; the live branch ends at the newest conversation): ${resources.transcript}`,
+					: `This conversation's transcript (Pi Durable's projection of every stored entry, all branches; the last binding line names the live conversation): ${resources.transcript}`,
 			),
 			section("cwd", (input) => resources.cwdOf(input).replace(/\\/g, "/")),
 		],
@@ -223,7 +250,6 @@ export function createAgentRegistry(
 	for (const extension of extra.first ?? []) registry.install(extension);
 	registry.install(CodingTools);
 	registry.install(createPiPrompt(resources));
-	registry.install(createSkillCommandsExtension());
 	for (const extension of extra.after ?? []) registry.install(extension);
 	return registry;
 }

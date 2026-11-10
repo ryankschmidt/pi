@@ -1,16 +1,24 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { createModels } from "@earendil-works/pi-ai";
+import { type ConversationId, createRegistry, type EntryId, Harness } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { startProgram } from "../src/client.ts";
+import { type AgentProgram, startProgram } from "../src/client.ts";
 import { ENGINE, PROTOCOL_VERSION } from "../src/protocol.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/faux-program.ts", import.meta.url));
 const toolsFixture = fileURLToPath(new URL("./fixtures/faux-tools-program.ts", import.meta.url));
 const roots: string[] = [];
+const started: AgentProgram[] = [];
 after(async () => {
+	// A failed assertion leaves its program running; stop it so the runner can exit.
+	for (const program of started) program.kill();
 	for (const root of roots) await rm(root, { recursive: true, force: true });
 });
 
@@ -19,8 +27,11 @@ async function fresh() {
 	roots.push(root);
 	return { store: join(root, "store"), cwd: root };
 }
-const start = (store: string, cwd: string, protocol?: number) =>
-	startProgram(process.execPath, [fixture, store, cwd], protocol === undefined ? {} : { protocol });
+const start = (store: string, cwd: string, protocol?: number) => {
+	const program = startProgram(process.execPath, [fixture, store, cwd], protocol === undefined ? {} : { protocol });
+	started.push(program);
+	return program;
+};
 
 test("hello carries the protocol, engine, version, store, agent and pid; a call answers", async () => {
 	const { store, cwd } = await fresh();
@@ -72,6 +83,8 @@ test("after a kill the next program takes the store; transcript.jsonl holds each
 	await first.call("wait", { submissionId });
 	first.kill();
 	await first.exited;
+	// A kill mid-write leaves a torn last line; the next start cuts it off and writes that record again.
+	await appendFile(join(store, "transcript.jsonl"), '{"seq":99,"entry":{"id":');
 	const second = start(store, cwd);
 	await second.hello;
 	const next = (await second.call("submit", { content: "two", requestId: "b" })) as { submissionId: number };
@@ -80,6 +93,7 @@ test("after a kill the next program takes the store; transcript.jsonl holds each
 	await second.exited;
 	const lines = (await readFile(join(store, "transcript.jsonl"), "utf8")).trim().split("\n").map((l) => JSON.parse(l));
 	const ids = lines.filter((l) => "entry" in l).map((l) => Number(l.entry.id));
+	assert.ok(lines.every((l) => "entry" in l || "conversation" in l || "binding" in l), "every line parses as a record");
 	assert.deepEqual(ids, [...new Set(ids)].sort((a, b) => a - b), "each entry once, in id order");
 	assert.equal(lines.filter((l) => "conversation" in l).length, 1);
 	assert.equal(ids.length >= 8, true);
@@ -107,4 +121,44 @@ test("a ThroughLine tool call leaves on the link with the stock tool name and it
 	await program.exited;
 	const transcript = await readFile(join(store, "transcript.jsonl"), "utf8");
 	assert.match(transcript, /task-1 is completed/, "the tool result is recorded in the conversation");
+});
+
+type Line = { entry?: { id: number; kind: string }; conversation?: { id: number }; binding?: { conversationId: number } };
+const transcriptLines = async (store: string): Promise<Line[]> =>
+	(await readFile(join(store, "transcript.jsonl"), "utf8")).trim().split("\n").map((l) => JSON.parse(l) as Line);
+const lastBinding = (lines: Line[]) => lines.filter((l) => l.binding).at(-1)?.binding?.conversationId;
+
+test("the transcript names the live conversation: a binding line at start, on fork, on forkBefore and at every restart", async () => {
+	const { store, cwd } = await fresh();
+	const first = start(store, cwd);
+	const hello = await first.hello;
+	assert.equal(lastBinding(await transcriptLines(store)), hello.conversationId, "the new root is bound at start");
+	const { submissionId } = (await first.call("submit", { content: "one", requestId: "a" })) as { submissionId: number };
+	await first.call("wait", { submissionId });
+	const answer = (await transcriptLines(store)).filter((l) => l.entry?.kind === "pi.assistant").at(-1)?.entry?.id;
+	const fork = (await first.call("fork", { entryId: answer })) as { conversationId: number };
+	assert.equal(lastBinding(await transcriptLines(store)), fork.conversationId, "a fork is bound");
+	const before = (await first.call("forkBefore", { entryId: answer })) as { conversationId: number };
+	assert.equal(lastBinding(await transcriptLines(store)), before.conversationId, "a rewind is bound");
+	await first.call("drain");
+	await first.exited;
+
+	// A crash after a fork's creation and before its binding: the store holds a newer conversation that is not bound.
+	const storage = await openNodeSqliteStorage(join(store, "store.sqlite"));
+	const registry = createRegistry();
+	registry.install(CodingTools);
+	const harness = await Harness.open(storage, { models: createModels(), registry, env: () => { throw new Error("no runs here"); } } as never, BACKGROUND_CONTEXT);
+	const bound = await harness.conversation(before.conversationId as ConversationId, BACKGROUND_CONTEXT);
+	const unbound = await harness.conversation(fork.conversationId as ConversationId, BACKGROUND_CONTEXT);
+	const orphan = await unbound?.fork(answer as EntryId, { ownership: { kind: "ownerless" } }, BACKGROUND_CONTEXT);
+	await harness.close(BACKGROUND_CONTEXT);
+	assert.ok(bound && orphan && Number(orphan.id) > before.conversationId, "the unbound fork is the newest conversation");
+
+	const second = start(store, cwd);
+	await second.hello;
+	const lines = await transcriptLines(store);
+	assert.ok(lines.some((l) => l.conversation?.id === Number(orphan?.id)), "the catch-up records the unbound fork");
+	assert.equal(lastBinding(lines), before.conversationId, "the restart names the stored binding, not the newest conversation");
+	await second.call("drain");
+	await second.exited;
 });
