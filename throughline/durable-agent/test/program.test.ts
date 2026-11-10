@@ -1,22 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@earendil-works/pi-ai";
-import { type ConversationId, createRegistry, type EntryId, Harness } from "@earendil-works/pi-durable";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { Binding } from "../src/binding.ts";
 import { type AgentProgram, startProgram } from "../src/client.ts";
-import { ENGINE, PROTOCOL_VERSION } from "../src/protocol.ts";
+import { ENGINE, encode, type Hello, lineSplitter, PROTOCOL_VERSION } from "../src/protocol.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/faux-program.ts", import.meta.url));
 const toolsFixture = fileURLToPath(new URL("./fixtures/faux-tools-program.ts", import.meta.url));
-const snapshotFixture = fileURLToPath(new URL("./fixtures/faux-snapshot-program.ts", import.meta.url));
+const bashFixture = fileURLToPath(new URL("./fixtures/faux-bash-program.ts", import.meta.url));
 const roots: string[] = [];
 const started: AgentProgram[] = [];
 after(async () => {
@@ -47,8 +42,8 @@ const userText = (entry: Stored) => {
 	if (typeof content === "string") return content;
 	return Array.isArray(content) ? content.map((part: { text?: string }) => part.text ?? "").join("") : "";
 };
-const startSnapshot = (store: string, cwd: string, pageSize?: number) => {
-	const program = startProgram(process.execPath, [snapshotFixture, store, cwd, ...(pageSize === undefined ? [] : [String(pageSize)])]);
+const startBash = (store: string, cwd: string) => {
+	const program = startProgram(process.execPath, [bashFixture, store, cwd]);
 	started.push(program);
 	return program;
 };
@@ -57,17 +52,6 @@ async function turn(program: AgentProgram, content: string, requestId: string): 
 	const settled = (await program.call("wait", { submissionId })) as { status: string };
 	assert.equal(settled.status, "done", program.stderr());
 }
-/** The path the newest conversation_snapshot call returned, read from its stored tool result. */
-const snapshotPath = (entries: Stored[]) => {
-	// The tool returns the path as its first text block; later blocks may carry diagnostics.
-	const results = entries.flatMap((entry) => entry.model ?? []).filter((m) => (m as { toolName?: string }).toolName === "conversation_snapshot");
-	const found = ((results.at(-1)?.content as { text?: string }[] | undefined)?.[0]?.text);
-	assert.ok(found, "a conversation_snapshot result names a file");
-	return found;
-};
-const snapshotEntries = async (path: string): Promise<Stored[]> =>
-	(await readFile(path, "utf8")).split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line) as { entry?: Stored }).flatMap((line) => (line.entry ? [line.entry] : []));
-
 const start = (store: string, cwd: string, protocol?: number) => {
 	const program = startProgram(process.execPath, [fixture, store, cwd], protocol === undefined ? {} : { protocol });
 	started.push(program);
@@ -158,375 +142,155 @@ test("a ThroughLine tool call leaves on the link with the stock tool name and it
 	await program.exited;
 });
 
-test("conversation_snapshot after a restart writes the live branch only: a rewound turn and a newer unbound fork never appear", async () => {
+/** A reader of the program's read socket, found through the store's owner.lock (as show-me finds it). */
+async function openOwner(store: string): Promise<{ hello: Hello; call(method: string, params?: Record<string, unknown>): Promise<unknown>; page(): Promise<Stored[]>; close(): void }> {
+	const owner = JSON.parse(await readFile(join(store, "owner.lock"), "utf8")) as { socket?: string };
+	assert.ok(owner.socket, "the owner record names the read socket");
+	const socket = connect(owner.socket);
+	const waiting = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+	let greeted: (hello: Hello) => void = () => undefined;
+	const hello = new Promise<Hello>((resolve) => (greeted = resolve));
+	socket.setEncoding("utf8");
+	socket.on(
+		"data",
+		lineSplitter((line) => {
+			const message = JSON.parse(line) as { kind: string; id?: string; value?: unknown; message?: string; code?: string };
+			if (message.kind === "hello") return greeted(message as unknown as Hello);
+			const pending = message.id === undefined ? undefined : waiting.get(message.id);
+			if (pending === undefined) return;
+			waiting.delete(message.id as string);
+			if (message.kind === "result") pending.resolve(message.value);
+			else pending.reject(new Error(`${message.code}: ${message.message}`));
+		}),
+	);
+	await new Promise<void>((resolve, reject) => {
+		socket.once("connect", () => resolve());
+		socket.once("error", reject);
+	});
+	socket.write(encode({ kind: "hello", protocol: PROTOCOL_VERSION, engine: ENGINE, version: "test", pid: process.pid }));
+	let serial = 0;
+	const call = (method: string, params: Record<string, unknown> = {}) =>
+		new Promise<unknown>((resolve, reject) => {
+			const id = `r${++serial}`;
+			waiting.set(id, { resolve, reject });
+			socket.write(`${JSON.stringify({ kind: "call", id, method, params })}\n`);
+		});
+	const page = async () => {
+		const all: Stored[] = [];
+		let cursor: unknown;
+		do {
+			const result = (await call("entries", { limit: 2, ...(cursor === undefined ? {} : { cursor }) })) as { items: Stored[]; next?: unknown };
+			all.push(...result.items);
+			cursor = result.next;
+		} while (cursor !== undefined && cursor !== null);
+		return all;
+	};
+	return { hello: await hello, call, page, close: () => socket.destroy() };
+}
+
+// Design brief 5, note B (build round 12): the agent answers its own `entries` method on a read socket whose path is
+// in owner.lock. A connection pins the conversation bound at its hello, so it never mixes branches and never shows a
+// withdrawn turn that was not live at that moment.
+test("the read socket named in owner.lock serves the live branch with the link's entries; a rewind shows to new readers, a pinned reader keeps its branch whole", async () => {
 	const { store, cwd } = await fresh();
-	const first = startSnapshot(store, cwd);
-	await first.hello;
-	await turn(first, "Retained root.", "a");
-	await turn(first, "Withdrawn branch choice.", "b");
-	const withdrawn = (await storedEntries(first)).find((entry) => userText(entry) === "Withdrawn branch choice.");
-	const withdrawnAnswer = (await storedEntries(first)).at(-1);
-	assert.ok(withdrawn && withdrawnAnswer);
-	await first.call("forkBefore", { entryId: withdrawn.id });
-	await turn(first, "Current choice.", "c");
-	await first.call("drain");
-	await first.exited;
-
-	// The reviewers' crash shape: a newer fork of the withdrawn branch, created and never bound.
-	const storage = await openNodeSqliteStorage(join(store, "store.sqlite"));
-	const registry = createRegistry();
-	registry.install(CodingTools);
-	const harness = await Harness.open(storage, { models: createModels(), registry, env: () => { throw new Error("no runs here"); } } as never, BACKGROUND_CONTEXT);
-	const root = await harness.conversation(withdrawn.conversationId as ConversationId, BACKGROUND_CONTEXT);
-	const orphan = await root?.fork(withdrawnAnswer.id as EntryId, { ownership: { kind: "ownerless" } }, BACKGROUND_CONTEXT);
-	await harness.close(BACKGROUND_CONTEXT);
-	assert.ok(orphan, "the unbound fork exists");
-
-	const second = startSnapshot(store, cwd);
-	await second.hello;
-	await turn(second, "snapshot please", "d");
-	const entries = await storedEntries(second);
-	const path = snapshotPath(entries);
-	const written = await snapshotEntries(path);
-	const last = Math.max(...written.map((entry) => entry.id));
-	assert.deepEqual(written.map((entry) => entry.id), entries.map((entry) => entry.id).filter((id) => id <= last), "the file holds what the bound conversation shows, in order");
-	assert.deepEqual(written.filter((entry) => entry.kind === "pi.user").map(userText), ["Retained root.", "Current choice.", "snapshot please"]);
-	assert.ok(!JSON.stringify(written).includes("Withdrawn branch choice."), "the withdrawn turn is never in the file");
-	assert.ok(!(await readdir(store)).includes("transcript.jsonl"), "no transcript file is written");
-
-	// Rereview9-2 #1, 9-3 #2: a second call never removes the first path; a consumer handed it earlier still reads it whole.
-	const firstBytes = await readFile(path, "utf8");
-	await turn(second, "snapshot again", "e");
-	const again = snapshotPath(await storedEntries(second));
-	assert.notEqual(again, path);
-	assert.equal(await readFile(path, "utf8"), firstBytes, "the earlier snapshot is still there, unchanged");
-	assert.deepEqual((await readdir(join(store, "snapshots"))).sort(), [path, again].map((p) => p.split("/").at(-1)).sort());
-	await second.call("drain");
-	await second.exited;
-});
-
-test("a program killed while conversation_snapshot writes leaves no partial file at a final name; the next call writes a whole one", { timeout: 120_000 }, async () => {
-	const { store, cwd } = await fresh();
-	const first = startSnapshot(store, cwd, 1);
-	await first.hello;
-	for (let index = 0; index < 60; index++) await turn(first, `Turn ${index}.`, `h${index}`);
-	await first.call("submit", { content: "snapshot now", requestId: "s1" });
-	// Page size 1 makes the write take one store read per entry; kill as soon as the temporary file exists.
-	const folder = join(store, "snapshots");
-	const deadline = Date.now() + 30_000;
-	let caught = false;
-	while (!caught && Date.now() < deadline) {
-		try {
-			caught = readdirSync(folder).some((name) => name.startsWith(".tmp-"));
-		} catch {}
-	}
-	first.kill();
-	await first.exited;
-	assert.ok(caught, "the kill landed while the snapshot was being written");
-	for (const name of await readdir(folder)) {
-		if (name.startsWith(".tmp-")) continue;
-		await snapshotEntries(join(folder, name)); // parses whole: a final name is only ever a renamed, complete file
-	}
-
-	const second = startSnapshot(store, cwd, 1);
-	await second.hello;
-	await turn(second, "snapshot after the kill", "s2");
-	const entries = await storedEntries(second);
-	const path = snapshotPath(entries);
-	const written = await snapshotEntries(path);
-	const last = Math.max(...written.map((entry) => entry.id));
-	assert.deepEqual(written.map((entry) => entry.id), entries.map((entry) => entry.id).filter((id) => id <= last));
-	// The killed call may be replayed after restart and keep its own whole snapshot (same branch); no temporary file remains.
-	assert.deepEqual((await readdir(folder)).filter((name) => name.startsWith(".tmp-")), [], "the killed write's temporary file is gone");
-	for (const name of await readdir(folder)) await snapshotEntries(join(folder, name));
-	await second.call("drain");
-	await second.exited;
-});
-
-test("snapshots are private under umask 022: the file 0600, its folder 0700 even when it existed wider", async () => {
-	const { store, cwd } = await fresh();
-	await mkdir(join(store, "snapshots"), { recursive: true, mode: 0o755 });
-	const previous = process.umask(0o022);
-	try {
-		const program = startSnapshot(store, cwd);
-		await program.hello;
-		await turn(program, "snapshot", "u1");
-		const path = snapshotPath(await storedEntries(program));
-		assert.equal((await stat(path)).mode & 0o777, 0o600);
-		assert.equal((await stat(join(store, "snapshots"))).mode & 0o777, 0o700);
-		await program.call("drain");
-		await program.exited;
-	} finally {
-		process.umask(previous);
-	}
-});
-
-test("a rewind during a snapshot: no snapshot reachable from the live branch holds withdrawn text, earlier or in flight (Rereview5-1)", { timeout: 120_000 }, async () => {
-	const { store, cwd } = await fresh();
-	const program = startSnapshot(store, cwd, 1);
+	const program = startBash(store, cwd);
 	await program.hello;
-	await turn(program, "Retained choice.", "r1");
-	await turn(program, "Withdrawn choice.", "r2");
-	for (let index = 0; index < 60; index++) await turn(program, `Padding ${index}.`, `p${index}`);
-	await turn(program, "snapshot first", "s1");
-	const earlier = snapshotPath(await storedEntries(program));
-	assert.ok(JSON.stringify(await snapshotEntries(earlier)).includes("Withdrawn choice."));
+	await turn(program, "Retained choice.", "a");
+	await turn(program, "Withdrawn choice.", "b");
+	const before = await openOwner(store);
+	assert.equal(before.hello.store, store);
+	assert.deepEqual((await before.page()).map((entry) => entry.id), (await storedEntries(program)).map((entry) => entry.id), "the socket's entries equal the link's");
 	const withdrawn = (await storedEntries(program)).find((entry) => userText(entry) === "Withdrawn choice.");
 	assert.ok(withdrawn);
-
-	// Sequential: the earlier snapshot was written before the rewind; after it, the path names nothing.
-	const before = (await program.call("submit", { content: "snapshot during the rewind", requestId: "s2" })) as { submissionId: number };
-	const folder = join(store, "snapshots");
-	const deadline = Date.now() + 30_000;
-	let overlapped = false;
-	while (!overlapped && Date.now() < deadline) {
-		try {
-			overlapped = readdirSync(folder).some((name) => name.startsWith(".tmp-"));
-		} catch {}
-	}
 	await program.call("forkBefore", { entryId: withdrawn.id });
-	assert.ok(overlapped, "the rewind landed while a snapshot was being written");
-	await program.call("wait", { submissionId: before.submissionId });
-	// The run that started before the rewind may finish its file, but its path is stored only in the withdrawn branch.
-	const { paths } = await reachableSnapshots(program);
-	assert.ok(!paths.includes(earlier), "the snapshot written before the rewind is not reachable from the live branch");
-	await assertReachableAreLive(program, "Withdrawn choice.", "rewind during a snapshot");
-	// Rereview9-1 #2: listing the folder, not only following stored paths, finds nothing withdrawn, earlier or in flight.
-	await assertFolderHolds(store, "Withdrawn choice.", "rewind during a snapshot");
-
-	await turn(program, "snapshot after the rewind", "s3");
-	const after = await snapshotEntries(snapshotPath(await storedEntries(program)));
-	assert.deepEqual(after.filter((entry) => entry.kind === "pi.user").map(userText), ["Retained choice.", "snapshot after the rewind"]);
+	await turn(program, "Replacement choice.", "c");
+	const after = await openOwner(store);
+	const live = await after.page();
+	assert.deepEqual(live.map((entry) => entry.id), (await storedEntries(program)).map((entry) => entry.id));
+	assert.deepEqual(live.filter((entry) => entry.kind === "pi.user").map(userText), ["Retained choice.", "Replacement choice."]);
+	assert.equal(after.hello.conversationId, Number(((await program.call("status")) as { conversationId: number }).conversationId), "hello pins the bound conversation");
+	const pinned = await before.page();
+	assert.ok(pinned.some((entry) => userText(entry) === "Withdrawn choice.") && !pinned.some((entry) => userText(entry) === "Replacement choice."), "a reader pinned before the rewind keeps the earlier branch whole, nothing of the new one");
+	await assert.rejects(after.call("submit", { content: "x", requestId: "z" }), /READ_ONLY_LINK/);
+	before.close();
+	after.close();
+	assert.deepEqual((await readdir(store)).filter((name) => !["owner.lock", "store.sqlite", "store.sqlite-wal", "store.sqlite-shm"].includes(name)), [], "a read writes nothing in the store folder");
 	await program.call("drain");
 	await program.exited;
 });
 
-/** Snapshot paths a reader of the live branch can reach: those named in the bound conversation's own entries. */
-async function reachableSnapshots(program: AgentProgram): Promise<{ live: Stored[]; paths: string[] }> {
-	const live = await storedEntries(program);
-	const paths = [...new Set([...JSON.stringify(live).matchAll(/(\/[^"\\]*\/snapshots\/[^"\\]+\.jsonl)/g)].map((m) => m[1] as string))];
-	return { live, paths };
-}
-/** No file anyone can list in the snapshots folder holds the withdrawn text (Rereview9-1 #2: same-account listing). */
-async function assertFolderHolds(store: string, withdrawn: string, label: string) {
-	const folder = join(store, "snapshots");
-	for (const name of existsSync(folder) ? await readdir(folder) : []) {
-		assert.ok(!(await readFile(join(folder, name), "utf8")).includes(withdrawn), `${label}: ${name} is listable in the snapshots folder and holds withdrawn text`);
-	}
-}
-/** Every reachable snapshot holds only entries of the live branch. */
-async function assertReachableAreLive(program: AgentProgram, withdrawn: string, label: string) {
-	const { live, paths } = await reachableSnapshots(program);
-	const liveIds = new Set(live.map((entry) => entry.id));
-	for (const path of paths) {
-		if (!existsSync(path)) continue;
-		const text = await readFile(path, "utf8");
-		// Withdrawn only when the rewind committed: a kill before its commit leaves the old branch live, sentence included.
-		if (!JSON.stringify(live).includes(withdrawn)) assert.ok(!text.includes(withdrawn), `${label}: ${path} is reachable from the live branch and holds withdrawn text`);
-		for (const entry of await snapshotEntries(path)) assert.ok(liveIds.has(entry.id), `${label}: ${path} holds entry ${entry.id} outside the live branch`);
-	}
-}
-
-// Rereview6-1, 6-2 and 6-3: a crash right after a rewind's or fork's binding commit, before anything else ran, left the
-// earlier snapshot readable after restart. The store is rebound here exactly as that commit leaves it, with no cleanup.
-for (const method of ["forkBefore", "fork"] as const) {
-	test(`a crash right after a ${method} binding commit: after restart no reachable snapshot holds withdrawn text and the stale file is gone`, { timeout: 60_000 }, async () => {
-		const { store, cwd } = await fresh();
-		const first = startSnapshot(store, cwd);
-		await first.hello;
-		await turn(first, "Retained choice.", "a");
-		await turn(first, "Withdraw this.", "b");
-		await turn(first, "snapshot please", "s1");
-		const entries = await storedEntries(first);
-		const stale = snapshotPath(entries);
-		assert.ok((await readFile(stale, "utf8")).includes("Withdraw this."));
-		const withdrawn = entries.find((entry) => userText(entry) === "Withdraw this.");
-		const retainedAnswer = entries.filter((entry) => entry.id < (withdrawn?.id ?? 0)).at(-1);
-		assert.ok(withdrawn && retainedAnswer);
-		await first.call("drain");
-		await first.exited;
-
-		// The rebind as committed, then nothing: what a SIGKILL after the binding commit leaves on disk.
-		const storage = await openNodeSqliteStorage(join(store, "store.sqlite"));
-		const registry = createRegistry();
-		registry.install(CodingTools);
-		const harness = await Harness.open(storage, { models: createModels(), registry, env: () => { throw new Error("no runs here"); } } as never, BACKGROUND_CONTEXT);
-		const root = await harness.conversation(withdrawn.conversationId as ConversationId, BACKGROUND_CONTEXT);
-		// forkBefore the withdrawn turn forks at the entry before it; fork at the retained answer is the same cut.
-		const next = await root?.fork(retainedAnswer.id as EntryId, { ownership: { kind: "ownerless" } }, BACKGROUND_CONTEXT);
-		assert.ok(next);
-		await harness.commit(async (tx) => {
-			const stored = await tx.doc(Binding);
-			stored.conversationId = Number(next.id);
-		}, BACKGROUND_CONTEXT);
-		await harness.close(BACKGROUND_CONTEXT);
-		assert.ok(existsSync(stale), `${method}: the stale snapshot is still on disk before restart`);
-
-		const second = startSnapshot(store, cwd);
-		const hello = await second.hello;
-		assert.equal(hello.conversationId, Number(next.id), "the restart shows the rebound conversation");
-		assert.ok(!existsSync(stale), `${method}: the stale snapshot is gone before the program answers`);
-		await assertReachableAreLive(second, "Withdraw this.", method);
-		await turn(second, "snapshot after restart", "s2");
-		await assertReachableAreLive(second, "Withdraw this.", method);
-		const fresh_ = await snapshotEntries(snapshotPath(await storedEntries(second)));
-		assert.deepEqual(fresh_.filter((entry) => entry.kind === "pi.user").map(userText), ["Retained choice.", "snapshot after restart"]);
-		await second.call("drain");
-		await second.exited;
-	});
-}
-
-test("a real kill at 0, 10 and 40 ms after sending fork or forkBefore never leaves a reachable snapshot with withdrawn text (Rereview5-1)", { timeout: 120_000 }, async () => {
-	for (const method of ["forkBefore", "fork"] as const) {
-		for (const delay of [0, 10, 40]) {
-			const { store, cwd } = await fresh();
-			const first = startSnapshot(store, cwd);
-			await first.hello;
-			await turn(first, "Retained choice.", "a");
-			await turn(first, "Withdraw this.", "b");
-			await turn(first, "snapshot please", "s1");
-			const entries = await storedEntries(first);
-			const withdrawn = entries.find((entry) => userText(entry) === "Withdraw this.");
-			const retainedAnswer = entries.filter((entry) => entry.id < (withdrawn?.id ?? 0)).at(-1);
-			assert.ok(withdrawn && retainedAnswer);
-			void first.call(method, { entryId: method === "fork" ? retainedAnswer.id : withdrawn.id }).catch(() => undefined);
-			await new Promise((resolve) => setTimeout(resolve, delay));
-			first.kill();
-			await first.exited;
-			const second = startSnapshot(store, cwd);
-			await second.hello;
-			await assertReachableAreLive(second, "Withdraw this.", `${method} ${delay} ms`);
-			await second.call("drain");
-			await second.exited;
-		}
-	}
-});
-
-test("a snapshot starts with its format line, naming the conversation and the last entry it holds (Rereview7-3 #1)", async () => {
+// The real path: a command the model runs (as a show-me skill body tells it to) reads the socket its own owner names.
+test("a command the agent runs reads its own live branch through the socket named in owner.lock", async () => {
 	const { store, cwd } = await fresh();
-	const program = startSnapshot(store, cwd);
+	await writeFile(join(cwd, "read-owner.mjs"), READ_OWNER_SCRIPT);
+	const program = startBash(store, cwd);
 	await program.hello;
-	await turn(program, "One.", "f1");
-	await turn(program, "snapshot", "f2");
-	const path = snapshotPath(await storedEntries(program));
-	const [first, ...rest] = (await readFile(path, "utf8")).split("\n").filter((line) => line.trim());
-	const written = rest.map((line) => (JSON.parse(line) as { entry: Stored }).entry);
-	assert.deepEqual(JSON.parse(first as string), {
-		format: "pi-durable-conversation-snapshot.v1",
-		conversationId: written[0]?.conversationId,
-		lastEntryId: written.at(-1)?.id,
-	});
+	await turn(program, "Keep this decision.", "a");
+	await turn(program, `bash: node read-owner.mjs ${store}`, "b");
+	const result = JSON.stringify(await storedEntries(program));
+	assert.match(result, /owner read: .*?Keep this decision\./, "the command saw the live turn through the socket");
 	await program.call("drain");
 	await program.exited;
 });
 
-test("a start-up cleanup failure never stops the agent and is logged (Rereview7-1 #3, 7-2 #2)", async () => {
+// A crash leaves a record whose socket nobody answers; the next start writes a record whose socket answers; a clean
+// stop removes both the socket and the record.
+test("after a kill the stale record's socket does not answer; a restart's does; a clean stop removes the socket", async () => {
 	const { store, cwd } = await fresh();
-	const folder = join(store, "snapshots");
-	await mkdir(folder, { recursive: true });
-	await chmod(folder, 0o000);
-	try {
-		const program = startSnapshot(store, cwd);
-		await program.hello;
-		assert.match(program.stderr(), /snapshot cleanup failed/);
-		await turn(program, "still answering", "c1");
-		await program.call("drain");
-		await program.exited;
-	} finally {
-		await chmod(folder, 0o700);
-	}
-});
-test("Rereview9-1 #2: after a rewind no file in the snapshots folder holds withdrawn words, without a restart; the new branch's snapshots stay", async () => {
-	const { store, cwd } = await fresh();
-	const program = startSnapshot(store, cwd);
-	await program.hello;
-	await turn(program, "Retained choice.", "r1");
-	await turn(program, "Withdrawn.", "r2");
-	await turn(program, "snapshot before the rewind", "r3");
-	const before = await storedEntries(program);
-	const stale = snapshotPath(before);
-	const withdrawn = before.find((entry) => userText(entry) === "Withdrawn.");
-	assert.ok(withdrawn);
-	await program.call("forkBefore", { entryId: withdrawn.id });
-	await turn(program, "New branch.", "r4");
-	const { paths } = await reachableSnapshots(program);
-	assert.ok(!paths.includes(stale), "the old path is not named anywhere in the live branch");
-	await assertReachableAreLive(program, "Withdrawn.", "after rewind");
-	// The rewind itself removed it: listing the folder (what any same-account tool can do) finds nothing withdrawn.
-	assert.ok(!existsSync(stale), "the rewind removed the withdrawn branch's snapshot");
-	await assertFolderHolds(store, "Withdrawn.", "after rewind");
-	await turn(program, "snapshot after the rewind", "r5");
-	const kept = snapshotPath(await storedEntries(program));
-	await turn(program, "snapshot once more", "r6");
-	assert.ok(existsSync(kept), "a later call on the same branch keeps the earlier one");
-	await program.call("drain");
-	await program.exited;
-});
-// Rereview10-2 #1: a snapshot call deletes nothing: not its own earlier files, not other names in the folder, not
-// temporary files. Withdrawal belongs to the rebind alone.
-test("a snapshot call never deletes anything in the snapshots folder", async () => {
-	const { store, cwd } = await fresh();
-	const program = startSnapshot(store, cwd);
-	await program.hello;
-	await turn(program, "snapshot one", "n1");
-	const first = snapshotPath(await storedEntries(program));
-	const folder = join(store, "snapshots");
-	// Placed after start (start clears the folder): another conversation's name and a temporary file.
-	await writeFile(join(folder, "999-1.jsonl"), "other\n");
-	await writeFile(join(folder, ".tmp-1-x"), "partial\n");
-	const before = new Map(await Promise.all((await readdir(folder)).map(async (name) => [name, await readFile(join(folder, name), "utf8")] as const)));
-	await turn(program, "snapshot two", "n2");
-	const second = snapshotPath(await storedEntries(program));
-	assert.notEqual(second, first);
-	for (const [name, bytes] of before) assert.equal(await readFile(join(folder, name), "utf8"), bytes, `${name} is unchanged after a later snapshot call`);
-	await program.call("drain");
-	await program.exited;
+	const first = startBash(store, cwd);
+	await first.hello;
+	await turn(first, "Before the kill.", "a");
+	const stale = (JSON.parse(await readFile(join(store, "owner.lock"), "utf8")) as { socket: string }).socket;
+	first.kill();
+	await first.exited;
+	await assert.rejects(new Promise((resolve, reject) => connect(stale).once("connect", resolve).once("error", reject)), /ECONNREFUSED|ENOENT/);
+	const second = startBash(store, cwd);
+	await second.hello;
+	const reader = await openOwner(store);
+	assert.notEqual(JSON.parse(await readFile(join(store, "owner.lock"), "utf8")).socket, stale);
+	assert.ok((await reader.page()).some((entry) => userText(entry) === "Before the kill."));
+	reader.close();
+	const current = (JSON.parse(await readFile(join(store, "owner.lock"), "utf8")) as { socket: string }).socket;
+	await second.call("drain");
+	await second.exited;
+	assert.ok(!existsSync(current), "the socket is removed at stop");
+	assert.ok(!existsSync(join(store, "owner.lock")), "and the record with it");
 });
 
-// Rereview10-2 #1: if a withdrawn branch's snapshot cannot be removed, the rewind is refused, so the thread never moves
-// while that file stays; the agent keeps answering, and the rewind succeeds once removal works.
-test("a rewind whose snapshots cannot be removed is refused, the binding stays, the agent keeps answering", async () => {
-	const { store, cwd } = await fresh();
-	const program = startSnapshot(store, cwd);
-	await program.hello;
-	await turn(program, "Retained.", "w1");
-	await turn(program, "Withdraw me.", "w2");
-	await turn(program, "snapshot", "w3");
-	const stale = snapshotPath(await storedEntries(program));
-	const withdrawn = (await storedEntries(program)).find((entry) => userText(entry) === "Withdraw me.");
-	assert.ok(withdrawn);
-	const folder = join(store, "snapshots");
-	await chmod(folder, 0o500);
-	try {
-		await assert.rejects(program.call("forkBefore", { entryId: withdrawn.id }), /rewind refused/);
-		assert.ok(existsSync(stale), "the snapshot of the still-bound branch is there");
-		assert.ok((await storedEntries(program)).some((entry) => userText(entry) === "Withdraw me."), "the thread is still on its branch");
-		await turn(program, "still answering", "w4");
-	} finally {
-		await chmod(folder, 0o700);
-	}
-	await program.call("forkBefore", { entryId: withdrawn.id });
-	assert.ok(!(await storedEntries(program)).some((entry) => userText(entry) === "Withdraw me."));
-	await assertFolderHolds(store, "Withdraw me.", "after the retried rewind");
-	await program.call("drain");
-	await program.exited;
-});
-
-// Rereview10-1, 10-2, 10-3 #1: no migration. The new program never reads, writes, moves or removes an older agent's
-// transcript.jsonl; instead it declares conversation_snapshot to every command it runs, and show-me reads only snapshots
-// there. So a failed rename has nothing to fail on, and a leftover old file is never read as current by this thread.
-test("an upgraded store's transcript.jsonl is left untouched, and commands the agent runs see PI_DURABLE_TRANSCRIPT", async () => {
+// Rereview10/11: the new program never reads, writes, moves or removes an older agent's transcript.jsonl.
+test("an upgraded store's transcript.jsonl is left untouched by the new program", async () => {
 	const { store, cwd } = await fresh();
 	await mkdir(store, { recursive: true });
 	const legacyBytes = `${JSON.stringify({ seq: 1, conversation: { id: 1 } })}\n`;
 	await writeFile(join(store, "transcript.jsonl"), legacyBytes);
-	const program = startSnapshot(store, cwd);
+	const program = startBash(store, cwd);
 	await program.hello;
 	await turn(program, "New decision after upgrade.", "u1");
-	await turn(program, "bash: printf 'declared=%s' \"$PI_DURABLE_TRANSCRIPT\"", "u2");
-	assert.match(JSON.stringify(await storedEntries(program)), /declared=conversation_snapshot/, "a command the agent runs is told the agent offers conversation_snapshot");
 	assert.equal(await readFile(join(store, "transcript.jsonl"), "utf8"), legacyBytes, "the old file is byte-unchanged");
-	assert.deepEqual((await readdir(store)).filter((name) => name.startsWith("transcript")), ["transcript.jsonl"], "nothing renamed or added");
 	await program.call("drain");
 	await program.exited;
 });
+
+/** A minimal reader of the owner socket, run by the scripted model as a skill body would run show-me. */
+const READ_OWNER_SCRIPT = `import { readFileSync } from "node:fs";
+import { connect } from "node:net";
+const store = process.argv[2];
+const socket = connect(JSON.parse(readFileSync(store + "/owner.lock", "utf8")).socket);
+let buffer = "";
+socket.setEncoding("utf8");
+socket.on("connect", () => {
+	socket.write(JSON.stringify({ kind: "hello", protocol: 2, engine: "pi-durable", version: "probe", pid: process.pid }) + "\\n");
+	socket.write(JSON.stringify({ kind: "call", id: "1", method: "entries", params: { limit: 500 } }) + "\\n");
+});
+socket.on("data", (chunk) => {
+	buffer += chunk;
+	for (const line of buffer.split("\\n").slice(0, -1)) {
+		const message = JSON.parse(line);
+		if (message.kind !== "result") continue;
+		const texts = message.value.items.filter((e) => e.kind === "pi.user").map((e) => JSON.stringify(e.model[0].content));
+		console.log("owner read: " + texts.join(" | "));
+		socket.destroy();
+	}
+	buffer = buffer.slice(buffer.lastIndexOf("\\n") + 1);
+});
+`;

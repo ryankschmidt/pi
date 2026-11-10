@@ -7,7 +7,8 @@ import { join } from "node:path";
 // The program holds `owner.lock` while it runs. A lock whose process is gone is reclaimed by the next start, so a
 // killed program restarts without help; a lock whose process is alive refuses the second program.
 
-export type LockOwner = { pid: number; startedAt: string; nonce: string };
+/** The owner record; `socket` is the path of the program's read socket (owner-read.ts), absent in older agents' records. */
+export type LockOwner = { pid: number; startedAt: string; nonce: string; socket?: string };
 export type StoreLock = { readonly owner: LockOwner; release(): Promise<void> };
 
 export class StoreAlreadyOwned extends Error {
@@ -47,10 +48,10 @@ async function readOwner(path: string): Promise<LockOwner | undefined> {
 	}
 }
 
-export async function lockStore(directory: string): Promise<StoreLock> {
+export async function lockStore(directory: string, socket?: string): Promise<StoreLock> {
 	await mkdir(directory, { recursive: true, mode: 0o700 });
 	const path = join(directory, "owner.lock");
-	const owner: LockOwner = { pid: process.pid, startedAt: new Date().toISOString(), nonce: randomUUID() };
+	const owner: LockOwner = { pid: process.pid, startedAt: new Date().toISOString(), nonce: randomUUID(), ...(socket === undefined ? {} : { socket }) };
 	for (let attempt = 0; attempt < 3; attempt++) {
 		try {
 			const file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);

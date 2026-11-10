@@ -4,7 +4,7 @@
 // module and the pinned show-me skill are found where an install puts them. Pi's settings are shaped like Ryan's: they
 // list no show-me skill.
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -206,20 +206,16 @@ test("the prompt carries APPEND_SYSTEM.md once, the project context and Pi and D
 	await stop(program);
 });
 
-test("the prompt sends a skill that wants the transcript to conversation_snapshot, and the tool writes the conversation without an approval question", { timeout: 60_000 }, async () => {
-	const model = await modelEndpoint([{ tool: "conversation_snapshot", args: {} }, { text: "written" }]);
+// Build round 12: no snapshot tool. The transcript section names the store folder, which an old show-me body passes as
+// "the transcript path your system prompt names"; show-me then asks this agent for the live branch.
+test("the prompt names the store folder as the transcript for show-me, and no snapshot tool is offered", { timeout: 60_000 }, async () => {
+	const model = await modelEndpoint([{ text: "written" }]);
 	const program = layout(model.port, { images: "none" }).start();
-	const questions: string[] = [];
-	program.onQuestion((question) => questions.push(JSON.stringify(question)));
-	await program.hello;
+	const hello = await program.hello;
 	assert.equal(await turn(program, "Show the plan.", "t1"), "done", program.stderr());
 	const system = systemText(model.bodies[0] as RequestBody);
-	assert.match(system, /<transcript>\s*Where a skill asks for this conversation's transcript, call conversation_snapshot and use the path it returns\.\s*<\/transcript>/);
-	assert.doesNotMatch(system, /transcript\.jsonl|\/store\//, "no file path is named");
-	assert.ok((model.bodies[0]?.tools ?? []).some((tool) => tool.function.name === "conversation_snapshot"), "the model is offered conversation_snapshot");
-	const path = /"(\/[^"]*\/snapshots\/[^"]*\.jsonl)"/.exec(JSON.stringify(model.bodies[1]?.messages))?.[1];
-	assert.ok(path !== undefined && readFileSync(path, "utf8").includes("Show the plan."), "the tool result names a file holding the conversation");
-	assert.deepEqual(questions, [], "approval-required mode asks nothing for it");
+	assert.ok(system.includes(`<transcript>\nThis conversation's transcript, for skills such as show-me: ${hello.store} (show-me asks this running agent for the live branch at that moment).`), system.slice(system.indexOf("<transcript>"), system.indexOf("<transcript>") + 300));
+	assert.ok(!(model.bodies[0]?.tools ?? []).some((tool) => tool.function.name === "conversation_snapshot"), "no snapshot tool");
 	await stop(program);
 });
 

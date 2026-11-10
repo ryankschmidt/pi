@@ -58,7 +58,7 @@ const IMAGE_COPY = `${CAPABILITIES}/subscription-images`;
 const IMAGE_FILES = ["shared.mjs", "effects.mjs", "check-image-schemas.mjs"];
 /** The image module's own schema check, shipped with it and bundled with its validator; run on the copied bytes. */
 const IMAGE_CHECKER = "check-image-schemas.mjs";
-/** The show-me frontmatter field that says its Pi Durable transcript comes from conversation_snapshot. */
+/** The show-me frontmatter field that says it reads a Pi Durable thread from the agent that owns it (owner-read.ts). */
 const SHOW_ME_TRANSCRIPT_FIELD = "pi-durable-transcript";
 /**
  * The shipped show-me skill (Ship Warden's Tier 2 copy of show-me.md); each install pins it as a skill the program
@@ -140,10 +140,10 @@ function skillProblem(file: string, name: string): string | undefined {
 	if (skill === undefined) return `pi's skill loader finds no skill named ${name} in ${file}`;
 	if (!skill.disableModelInvocation) return `${file} is not marked disable-model-invocation, so /${name} would not be listed as a command`;
 	// This program writes no transcript file; a show-me that reads one would find nothing, or stale words, in every
-	// Durable thread. The skill declares where its transcript comes from, and only conversation_snapshot is accepted.
+	// Durable thread. The skill declares where its transcript comes from, and only the owner read is accepted.
 	const { frontmatter } = parseFrontmatter<Record<string, unknown>>(readFileSync(file, "utf8"));
-	if (frontmatter[SHOW_ME_TRANSCRIPT_FIELD] !== "conversation_snapshot") {
-		return `${file} does not declare ${SHOW_ME_TRANSCRIPT_FIELD}: conversation_snapshot, so it would read a transcript file this agent no longer writes (show-me 2.0.7 and older)`;
+	if (frontmatter[SHOW_ME_TRANSCRIPT_FIELD] !== "owner") {
+		return `${file} does not declare ${SHOW_ME_TRANSCRIPT_FIELD}: owner, so it would read a transcript file this agent does not keep current (show-me 2.0.12 and older)`;
 	}
 	return undefined;
 }

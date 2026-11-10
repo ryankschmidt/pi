@@ -4,7 +4,7 @@
 // with its success shape (htmlRender.attachmentId); every other tool is the agent's own. The thread first states a decision in plain words, then Ryan types the command. One extra run per model
 // is a rewound thread: the withdrawn turn holds the most on-topic sentence, and the page must never quote it.
 //   node proof/show-me-page-eval.ts --out <results.json> [--runs 10] [--models a,b] [--parallel 4]
-// A run passes only when: conversation_snapshot ran before build and build's --transcript is the path it returned;
+// A run passes only when: build's --transcript names this thread's store and build read it from the running agent;
 // build and check each have a stored, successful result; the last page sent to html_render hashes to the sha256 of
 // the page the passing check approved; and its words line is a sentence from the retained turn, never the withdrawn one
 // (show-me-score.ts). A missing result is a failure, and the process exits non-zero if any run failed.
@@ -125,12 +125,11 @@ async function run(model: string, index: number, rewound: boolean) {
 	const textOf = (call: (typeof calls)[number] | undefined) => JSON.stringify(result(call?.id)?.content ?? "");
 	const builds = bashOf(/show-me\/dist\/cli\.js build/);
 	const checks = bashOf(/show-me\/dist\/cli\.js check/);
-	const snapshots = calls.filter((call) => call.name === "conversation_snapshot");
-	const snapshotPath = /(\/[^"\\]*\/snapshots\/\d+-\d+\.jsonl)/.exec(textOf(snapshots.at(-1)))?.[1];
-	const buildIndex = calls.findIndex((call) => builds.includes(call));
-	const snapshotBeforeBuild = snapshots.length > 0 && calls.indexOf(snapshots[0] as (typeof calls)[number]) < buildIndex;
 	const transcriptArg = /--transcript\s+("([^"]+)"|'([^']+)'|(\S+))/.exec(String(builds.at(-1)?.arguments?.command ?? ""));
 	const buildTranscript = transcriptArg?.[2] ?? transcriptArg?.[3] ?? transcriptArg?.[4];
+	// show-me 2.0.13 labels a legacy read in its build output; an owner read carries no "transcript" label.
+	const storeDir = join(root, "store");
+	const buildReadsOwner = (buildTranscript === storeDir || buildTranscript === join(storeDir, "transcript.jsonl")) && !/legacy Pi Durable/.test(textOf(builds.at(-1)));
 	// The check prints its page's sha256; the page sent to html_render must be those exact bytes.
 	const checkSha = /\\?"sha256\\?":\s*\\?"([0-9a-f]{64})/.exec(textOf(checks.at(-1)))?.[1];
 	const page = renders.at(-1);
@@ -149,13 +148,11 @@ async function run(model: string, index: number, rewound: boolean) {
 		check_ran: checks.length > 0,
 		check_succeeded: succeeded(checks),
 		rewound,
-		snapshot_before_build: snapshotBeforeBuild,
-		build_transcript_is_snapshot: snapshotPath !== undefined && buildTranscript === snapshotPath,
+		build_reads_owner: buildReadsOwner,
 		html_render_calls: renders.length,
 		published_checked_bytes,
 		passed: scoreRun({
-			snapshotBeforeBuild,
-			buildTranscriptIsSnapshot: snapshotPath !== undefined && buildTranscript === snapshotPath,
+			buildReadsOwner,
 			buildSucceeded: succeeded(builds),
 			checkSucceeded: succeeded(checks),
 			publishedCheckedBytes: published_checked_bytes,
@@ -199,7 +196,7 @@ await Promise.all(
 			const result = await (jobs[next++] as () => ReturnType<typeof run>)();
 			results.push(result);
 			process.stdout.write(
-				`${result.passed ? "PASS" : "FAIL"} ${result.model} #${result.run}${result.rewound ? " rewound" : ""} snapshot=${result.snapshot_before_build}/${result.build_transcript_is_snapshot} build=${result.build_succeeded} check=${result.check_succeeded} checked-bytes=${result.published_checked_bytes} renders=${result.html_render_calls} words-not-withdrawn=${result.words_never_withdrawn} ${result.seconds}s${result.error ? ` ${result.error}` : ""}\n`,
+				`${result.passed ? "PASS" : "FAIL"} ${result.model} #${result.run}${result.rewound ? " rewound" : ""} owner=${result.build_reads_owner} build=${result.build_succeeded} check=${result.check_succeeded} checked-bytes=${result.published_checked_bytes} renders=${result.html_render_calls} words-not-withdrawn=${result.words_never_withdrawn} ${result.seconds}s${result.error ? ` ${result.error}` : ""}\n`,
 			);
 		}
 	}),
@@ -208,7 +205,7 @@ const count = (model: string, key: keyof (typeof results)[number]) => `${results
 const summary = Object.fromEntries(
 	[...new Set(results.map((r) => r.model))].map((model) => [
 		model,
-		{ passed: count(model, "passed"), read_skill_first: count(model, "read_skill_first"), snapshot_before_build: count(model, "snapshot_before_build"), build_transcript_is_snapshot: count(model, "build_transcript_is_snapshot"), build_succeeded: count(model, "build_succeeded"), check_succeeded: count(model, "check_succeeded"), published_checked_bytes: count(model, "published_checked_bytes"), words_never_withdrawn: count(model, "words_never_withdrawn") },
+		{ passed: count(model, "passed"), read_skill_first: count(model, "read_skill_first"), build_reads_owner: count(model, "build_reads_owner"), build_succeeded: count(model, "build_succeeded"), check_succeeded: count(model, "check_succeeded"), published_checked_bytes: count(model, "published_checked_bytes"), words_never_withdrawn: count(model, "words_never_withdrawn") },
 	]),
 );
 writeFileSync(values.out as string, `${JSON.stringify({ schema: "durable-agent.show-me-page-eval.v3", ran_at: new Date().toISOString(), context: CONTEXT, command: COMMAND, summary, results }, null, 2)}\n`);

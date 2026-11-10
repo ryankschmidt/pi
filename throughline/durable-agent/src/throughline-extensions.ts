@@ -11,8 +11,7 @@ import { defineExtension, defineTool, type Extension, hook, section, ToolTask } 
 
 export type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
-// conversation_snapshot writes only its own snapshot file beside the store, never the user's files.
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "tool_search", "conversation_snapshot"]);
+const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "tool_search"]);
 const FILE_CHANGE_TOOLS = new Set(["edit", "write"]);
 /** Names the agent sees for ThroughLine's tools; ThroughLine maps them to the stock screen's names. */
 export const TOOL_PREFIX = "throughline__";

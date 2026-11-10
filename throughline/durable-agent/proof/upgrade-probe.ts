@@ -1,23 +1,21 @@
-// Build round 11 probe on this Mac (Rereview10-1, 10-2, 10-3): one disposable store taken through the real old agent
-// program (the installed copy's scripted-model fixture), an upgrade to this agent program, a rewind, and a rollback to
-// the old program. Show-me's real CLI (Tier 1 build) is run by each program's own command tool, as a skill body tells
-// the model to, so it sees exactly the environment the running agent gives its commands. The reviewers' failed-cleanup
-// setup (a directory where round 10 moved the old file) is placed first; nothing in this round touches that path.
+// Build round 12 probe on this Mac (Design brief 5; Rereview11-1 #2, 11-3 #1): one disposable store taken through the
+// real old agent program (the installed copy's scripted-model fixture), an upgrade to this program, a rewind, a crash,
+// and a rollback to the old program. Show-me's real CLI (Tier 1 build) runs through each program's own command tool, as
+// a skill body tells the model to: the old body's path (<store>/transcript.jsonl) and the new prompt's (<store>).
 // Needs the installed agent and show-me's Tier 1 build, so it is a proof script.   node proof/upgrade-probe.ts
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AgentProgram, startProgram } from "../src/client.ts";
 
 const OLD = "/Users/Admin/.local/share/pi-durable-agent/current/throughline/durable-agent/test/fixtures/faux-program.ts";
-const NEW = fileURLToPath(new URL("../test/fixtures/faux-snapshot-program.ts", import.meta.url));
+const NEW = fileURLToPath(new URL("../test/fixtures/faux-bash-program.ts", import.meta.url));
 const SHOW_ME = "/Users/Admin/core-root/vault/01_Projects/workbench/tools/show-me/dist/cli.js";
-const WORDS = "Old choice[.]|New decision after upgrade[.]|Withdrawn later[.]|Replacement after rewind[.]|Back on the old program[.]";
+const WORDS = "Old choice[.]|New decision after upgrade[.]|Withdrawn later[.]|Replacement after rewind[.]|After the crash[.]|Back on the old program[.]";
 const root = mkdtempSync(join(tmpdir(), "upgrade-probe-"));
 const store = join(root, "store");
-const transcript = join(store, "transcript.jsonl");
 const spec = join(root, "spec.json");
 writeFileSync(spec, JSON.stringify({ form: "options", title: "Choices", columns: ["Value"], rows: [{ label: "First", cells: [{ text: "Keep", state: "good", claim: "written" }], evidence: "Evidence here" }], call: "Choose one", honesty: "Proposed only." }));
 type Entry = { id: number; model?: { role: string; content: unknown; toolName?: string }[] };
@@ -26,51 +24,56 @@ const turn = async (program: AgentProgram, content: string, requestId: string) =
 	await program.call("wait", { submissionId });
 };
 const entries = async (program: AgentProgram) => ((await program.call("entries", { limit: 300 })) as { items: Entry[] }).items;
-const lastToolText = async (program: AgentProgram, tool: string) =>
-	((await entries(program)).flatMap((e) => e.model ?? []).filter((m) => m.toolName === tool).at(-1)?.content as { text: string }[] | undefined)?.map((c) => c.text).join("") ?? "";
-/** Run show-me build on `path` through the program's own command tool (the old program has no scripted bash; it runs here with no declaration, as its commands would). */
-const build = async (program: AgentProgram | undefined, path: string, tag: string) => {
-	const out = join(root, `${tag}.html`);
-	const command = `node ${SHOW_ME} build ${spec} --transcript ${path} --out ${out} 2>&1; echo "exit=$?"; echo "words on the page: $(grep -oE '${WORDS}' ${out} 2>/dev/null | sort -u | tr '\\n' '|')"; true`;
-	if (program === undefined) {
-		return execFileSync("bash", ["-c", command], { encoding: "utf8", env: { ...process.env, PI_DURABLE_TRANSCRIPT: "" } });
-	}
-	await turn(program, `bash: ${command}`, tag);
-	return lastToolText(program, "bash");
+const lastBash = async (program: AgentProgram) =>
+	((await entries(program)).flatMap((e) => e.model ?? []).filter((m) => m.toolName === "bash").at(-1)?.content as { text: string }[] | undefined)?.map((c) => c.text).join("") ?? "";
+let serial = 0;
+/** show-me build on `path` asked to quote `newest`; through the program's command tool when given, else from outside any agent. The phrase is found only if the read holds that turn. */
+const build = async (program: AgentProgram | undefined, path: string, newest: string) => {
+	const out = join(root, `page-${++serial}.html`);
+	const command = `node ${SHOW_ME} build ${spec} --transcript ${path} --words "${newest}" --out ${out} > ${out}.log 2>&1; echo "exit=$?"; grep -q "legacy Pi Durable" ${out}.log && echo "label=legacy"; grep -m1 -o "is not running" ${out}.log; if [ -f ${out} ]; then grep -q "picked from this thread" ${out} && echo "newest turn NOT found (picked)" || echo "newest turn found: ${newest}"; else echo "no page"; fi; echo "words=$(grep -oE '${WORDS}' ${out} 2>/dev/null | sort -u | tr '\\n' '|')"; true`;
+	if (program === undefined) return execFileSync("bash", ["-c", command], { encoding: "utf8" }).replace(/\s+/g, " ").trim();
+	await turn(program, `bash: ${command}`, `b${serial}`);
+	return (await lastBash(program)).replace(/\s+/g, " ").trim();
 };
-const run = async (fixture: string, label: string, work: (program: AgentProgram) => Promise<void>) => {
+const run = async (fixture: string, label: string, work: (program: AgentProgram) => Promise<void>, kill = false) => {
 	const program = startProgram(process.execPath, [fixture, store, root]);
 	await program.hello;
 	console.log(`-- ${label}`);
 	await work(program);
-	await program.call("drain");
+	if (kill) program.kill();
+	else await program.call("drain");
 	await program.exited;
 };
-const short = (text: string) => { const s = text.replace(/\s+/g, " "); return s.length > 420 ? `${s.slice(0, 200)} … ${s.slice(-200)}` : s; };
+const owner = () => JSON.parse(readFileSync(join(store, "owner.lock"), "utf8")) as { socket?: string };
 
 await run(OLD, "1. installed old agent program", async (program) => {
 	await turn(program, "Old choice.", "a");
+	console.log(`old record names a socket: ${owner().socket !== undefined}; show-me from outside: ${await build(undefined, join(store, "transcript.jsonl"), "Old choice.")}`);
 });
-console.log(`old program wrote transcript.jsonl: ${existsSync(transcript)}; show-me build from it (old agent, no declaration): ${short(await build(undefined, transcript, "old"))}`);
-mkdirSync(join(store, "transcript.superseded-by-conversation-snapshot.jsonl"));
-const before = readFileSync(transcript, "utf8");
-await run(NEW, "2. upgraded to this agent program (round-10 failed-cleanup setup in place)", async (program) => {
-	await turn(program, "New decision after upgrade.", "b");
-	console.log(`transcript.jsonl byte-unchanged by the new program: ${readFileSync(transcript, "utf8") === before}`);
-	console.log(`old skill body path (transcript.jsonl) through the agent's command tool: ${short(await build(program, transcript, "replayed-old-skill"))}`);
-	await turn(program, "Withdrawn later.", "c");
-	await turn(program, "snapshot please", "d");
-	const snapshot = await lastToolText(program, "conversation_snapshot");
-	console.log(`snapshot path through the agent's command tool: ${short(await build(program, snapshot, "snapshot"))}`);
-	const withdrawn = (await entries(program)).find((e) => e.model?.[0]?.content === "Withdrawn later.");
-	await program.call("forkBefore", { entryId: withdrawn?.id });
-	await turn(program, "Replacement after rewind.", "e");
-	const folder = join(store, "snapshots");
-	const names = existsSync(folder) ? readdirSync(folder) : [];
-	console.log(`after the rewind: ${names.length} files in the snapshots folder, ${names.filter((n) => readFileSync(join(folder, n), "utf8").includes("Withdrawn later.")).length} holding the withdrawn turn`);
+const before = readFileSync(join(store, "transcript.jsonl"), "utf8");
+await run(
+	NEW,
+	"2. upgraded to this program; then killed (a crash)",
+	async (program) => {
+		await turn(program, "New decision after upgrade.", "b");
+		console.log(`old skill body path (transcript.jsonl), through the agent: ${await build(program, join(store, "transcript.jsonl"), "New decision after upgrade.")}`);
+		console.log(`new prompt path (store folder), through the agent: ${await build(program, store, "New decision after upgrade.")}`);
+		await turn(program, "Withdrawn later.", "c");
+		const withdrawn = (await entries(program)).find((e) => e.model?.[0]?.content === "Withdrawn later.");
+		await program.call("forkBefore", { entryId: withdrawn?.id });
+		await turn(program, "Replacement after rewind.", "d");
+		console.log(`after a rewind, old body path: ${await build(program, join(store, "transcript.jsonl"), "Replacement after rewind.")}`);
+		console.log(`transcript.jsonl byte-unchanged by the new program: ${readFileSync(join(store, "transcript.jsonl"), "utf8") === before}`);
+	},
+	true,
+);
+console.log(`after the crash, show-me from outside (record names a dead socket): ${await build(undefined, join(store, "transcript.jsonl"), "Replacement after rewind.")}`);
+await run(NEW, "3. restarted after the crash", async (program) => {
+	await turn(program, "After the crash.", "e");
+	console.log(`old body path, through the agent: ${await build(program, join(store, "transcript.jsonl"), "After the crash.")}`);
 });
-await run(OLD, "3. rolled back to the installed old agent program", async (program) => {
+await run(OLD, "4. rolled back to the installed old agent program", async (program) => {
 	await turn(program, "Back on the old program.", "f");
+	console.log(`record names a socket: ${owner().socket !== undefined}; show-me from outside: ${await build(undefined, join(store, "transcript.jsonl"), "Back on the old program.")}`);
 });
-console.log(`show-me build from transcript.jsonl after rollback (old agent, no declaration): ${short(await build(undefined, transcript, "rollback"))}`);
 process.exit(0);

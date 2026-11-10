@@ -72,7 +72,7 @@ function fakeShowMe(body = "Show it."): string {
 	writeFileSync(join(dir, "dist/cli.js"), "console.log(\"show-me\");\n");
 	mkdirSync(join(dir, "references"));
 	writeFileSync(join(dir, "references/Show-Me-Visual-Standard.html"), "<p>standard</p>\n");
-	writeFileSync(file, `---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\npi-durable-transcript: conversation_snapshot\n---\n${body}\n`);
+	writeFileSync(file, `---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\npi-durable-transcript: owner\n---\n${body}\n`);
 	return file;
 }
 
@@ -164,17 +164,17 @@ test("the image module is pinned inside the install: missing or incompatible ref
 	assert.ok(!check(runtime, imageModule, showMe).problems.some((p) => p.includes("changed after install")), "the pin itself is unchanged");
 });
 
-test("a show-me that does not read the transcript through conversation_snapshot is refused before it is pinned (Rereview5-2 #3, 5-3)", async () => {
+test("a show-me that does not read a Durable thread from its owner is refused before it is pinned (Rereview5-2 #3, 5-3)", async () => {
 	const fork = fakeFork();
 	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-"));
 	const imageModule = fakeImageModule();
 	// show-me 2.0.7's shape: a command skill whose transcript step reads the transcript.jsonl path the prompt used to name.
 	const older = fakeShowMe("Pi Durable: the transcript.jsonl path your system prompt names under transcript.");
-	writeFileSync(older, readFileSync(older, "utf8").replace("pi-durable-transcript: conversation_snapshot\n", ""));
-	await assert.rejects(install(fork, runtime, null, { imageModule, showMe: older }), /does not declare pi-durable-transcript: conversation_snapshot[\s\S]*current is unchanged/);
+	writeFileSync(older, readFileSync(older, "utf8").replace("pi-durable-transcript: owner\n", ""));
+	await assert.rejects(install(fork, runtime, null, { imageModule, showMe: older }), /does not declare pi-durable-transcript: owner[\s\S]*current is unchanged/);
 	assert.equal(existsSync(join(runtime, "current")), false);
 	const pin = await install(fork, runtime, null, { imageModule, showMe: fakeShowMe() });
-	assert.match(readFileSync(join(runtime, "versions", pin.id, "throughline/durable-agent/capabilities/skills/show-me/SKILL.md"), "utf8"), /pi-durable-transcript: conversation_snapshot/);
+	assert.match(readFileSync(join(runtime, "versions", pin.id, "throughline/durable-agent/capabilities/skills/show-me/SKILL.md"), "utf8"), /pi-durable-transcript: owner/);
 });
 
 test("the show-me skill is pinned inside the install: missing or model-callable refuses, a newer ship is reported", async () => {
@@ -195,7 +195,7 @@ test("the show-me skill is pinned inside the install: missing or model-callable 
 	const copy = join(runtime, "versions", pin.id, "throughline/durable-agent/capabilities/skills/show-me/SKILL.md");
 	assert.equal(statSync(copy).mode & 0o222, 0, "the pinned skill is read-only");
 	assert.ok(!check(runtime, imageModule, showMe).problems.some((p) => p.includes("show-me")));
-	writeFileSync(showMe, "---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\npi-durable-transcript: conversation_snapshot\n---\nShow it better.\n");
+	writeFileSync(showMe, "---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\npi-durable-transcript: owner\n---\nShow it better.\n");
 	assert.ok(check(runtime, imageModule, showMe).problems.includes("show-me skill pinned older than shipped; the next agent install picks it up"));
 });
 

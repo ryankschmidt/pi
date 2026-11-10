@@ -5,8 +5,8 @@ export type PageWords = { text: string; picked: boolean };
 
 /** What one evaluated run did, read from its stored entries. */
 export type RunFacts = {
-	snapshotBeforeBuild: boolean;
-	buildTranscriptIsSnapshot: boolean;
+	/** build's --transcript names this thread's store (its folder or its transcript.jsonl) and the build read it live, not as legacy. */
+	buildReadsOwner: boolean;
 	buildSucceeded: boolean;
 	checkSucceeded: boolean;
 	publishedCheckedBytes: boolean;
@@ -26,8 +26,7 @@ export function scoreRun(facts: RunFacts): boolean {
 	const words = facts.words?.text.trim() ?? "";
 	const wordsOk = words.length > 0 && facts.words?.picked === false && facts.retained.includes(words) && !facts.withdrawn.includes(words);
 	return (
-		facts.snapshotBeforeBuild &&
-		facts.buildTranscriptIsSnapshot &&
+		facts.buildReadsOwner &&
 		facts.buildSucceeded &&
 		facts.checkSucceeded &&
 		facts.publishedCheckedBytes &&

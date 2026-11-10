@@ -24,8 +24,8 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { Binding } from "./binding.ts";
 import { carrySession } from "./carry.ts";
-import { clearSnapshots, withdrawSnapshotsAndRebind } from "./conversation-snapshot.ts";
 import { lockStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
+import { ownerSocketPath, serveOwnerReads } from "./owner-read.ts";
 import { reapLeftovers, startReaper } from "./reaper.ts";
 import {
 	type Call,
@@ -95,9 +95,11 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		if (!options.output.writableEnded) options.output.write(encode(message));
 	};
 
+	// The read socket's path goes into the owner record, so it belongs to this live owner (owner-read.ts).
+	const socketPath = ownerSocketPath();
 	let lock: StoreLock;
 	try {
-		lock = await lockStore(options.storeDir);
+		lock = await lockStore(options.storeDir, socketPath);
 	} catch (error) {
 		if (error instanceof StoreAlreadyOwned) {
 			send({ kind: "error", code: error.code, message: error.message });
@@ -106,10 +108,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		throw error;
 	}
 
-	// Before anything is served: snapshots and killed writes' temporary files are removed (cleanup; a rebind already
-	// withdrew any other branch's files before committing). Failures are logged and the agent still starts. An older
-	// agent's transcript.jsonl is never read, written, moved or removed here.
-	for (const failure of clearSnapshots(options.storeDir)) log(failure);
+	// An older agent's transcript.jsonl is never read, written, moved or removed here.
 	if (options.reap) {
 		const killed = reapLeftovers(options.storeDir);
 		if (killed > 0) log(`stopped ${killed} command group(s) left by an earlier program`);
@@ -117,6 +116,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 	}
 
 	let harness: Harness | undefined;
+	let reads: { close(): Promise<void> } | undefined;
 	const watches = new Map<string, ConversationWatch>();
 	let stopping: Promise<number> | undefined;
 
@@ -130,6 +130,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		stopping = (async () => {
 			for (const watch of watches.values()) await watch.stop().catch(() => undefined);
 			watches.clear();
+			await reads?.close();
 			if (harness) await harness.close(context);
 			await lock.release();
 			return finish(code);
@@ -156,15 +157,9 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			conversation = found;
 		} else {
 			conversation = await opened.root(context, { agent: options.initialAgent });
-			// A new store has no snapshots and no earlier branch: the first binding is committed directly.
-			await commitBinding(conversation.id);
+			await bind(conversation.id);
 		}
 		async function bind(id: ConversationId) {
-			// Snapshots are withdrawn before the binding moves; if one cannot be removed the rebind is refused (see
-			// conversation-snapshot.ts), so no withdrawn branch's file outlives a completed rewind.
-			await withdrawSnapshotsAndRebind(options.storeDir, () => commitBinding(id));
-		}
-		async function commitBinding(id: ConversationId) {
 			await opened.commit(async (tx) => {
 				const stored = await tx.doc(Binding);
 				stored.agentId = options.agentId;
@@ -180,9 +175,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			const stored = await opened.snapshot(SessionApprovals, context);
 			for (const tool of stored?.tools ?? []) approvals.allowForSession(tool);
 		}
-		opened.resume();
-
-		const hello: Hello = {
+		const helloFor = (shown: Conversation): Hello => ({
 			kind: "hello",
 			protocol: PROTOCOL_VERSION,
 			engine: ENGINE,
@@ -190,9 +183,25 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			store: options.storeDir,
 			agent: options.agentId,
 			pid: process.pid,
-			conversationId: Number(conversation.id),
-		};
-		send(hello);
+			conversationId: Number(shown.id),
+		});
+		/** The link's `entries` method; the read socket serves the same call against the conversation it pinned at hello. */
+		const readEntries = (shown: Conversation, params: Record<string, unknown>) =>
+			shown.entries(
+				{
+					order: params.order === "descending" ? "descending" : "ascending",
+					...(typeof params.minEntryId === "number" ? { minEntryId: params.minEntryId as EntryId } : {}),
+					...(typeof params.maxEntryId === "number" ? { maxEntryId: params.maxEntryId as EntryId } : {}),
+				},
+				typeof params.limit === "number" ? params.limit : 100,
+				params.cursor as never,
+				context,
+			);
+		// Listening before resume: no command a turn runs can start before the socket its owner record names answers.
+		reads = await serveOwnerReads(socketPath, helloFor, () => conversation, readEntries);
+		opened.resume();
+
+		send(helloFor(conversation));
 		approvals?.connect((question) => send({ kind: "question", question }));
 		options.tools?.connect((call) => send({ kind: "tool", ...call }));
 
@@ -247,7 +256,6 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 						{ ownership: { kind: "ownerless" } },
 						context,
 					);
-					// Bind first: a refused rebind (see conversation-snapshot.ts) leaves the thread, its watches and conversation as they were.
 					await bind(fork.id);
 					await stopWatches();
 					conversation = fork;
@@ -270,16 +278,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 					return { stopped: watch !== undefined };
 				}
 				case "entries":
-					return await conversation.entries(
-						{
-							order: params.order === "descending" ? "descending" : "ascending",
-							...(typeof params.minEntryId === "number" ? { minEntryId: params.minEntryId as EntryId } : {}),
-							...(typeof params.maxEntryId === "number" ? { maxEntryId: params.maxEntryId as EntryId } : {}),
-						},
-						typeof params.limit === "number" ? params.limit : 100,
-						params.cursor as never,
-						context,
-					);
+					return await readEntries(conversation, params);
 				case "abortTask":
 					return { state: await opened.abortTask(params.taskId as TaskId, context) };
 				case "status": {

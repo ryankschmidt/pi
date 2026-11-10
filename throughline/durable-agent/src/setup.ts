@@ -35,7 +35,6 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { createConversationSnapshotExtension, SNAPSHOT_TOOL } from "./conversation-snapshot.ts";
 
 export { ModelRuntime, SettingsManager };
 
@@ -194,7 +193,7 @@ const escapeXml = (text: string) =>
 	text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 
 /** The program's system prompt as one Durable extension: preamble, tools, rules, addendum, context, skills, folder. */
-export function createPiPrompt(resources: AgentResources) {
+export function createPiPrompt(resources: AgentResources, storeDir: string) {
 	const ownTools = (input: PromptInput) => input.agent.tools.map((tool) => tool.name).filter((name) => name in TOOL_LINES);
 	return defineExtension({
 		name: PI_PROMPT_NAME,
@@ -229,9 +228,11 @@ export function createPiPrompt(resources: AgentResources) {
 				const text = [formatSkillsForPrompt(skills, "read").trim(), commandsText(skills)].filter((part) => part.length > 0).join("\n\n");
 				return text.length > 0 ? text : undefined;
 			}),
+			// The old show-me body asks for "the transcript path your system prompt names"; the store folder is that path now, and
+			// show-me asks the agent that owns it for the live branch (owner-read.ts).
 			section(
 				"transcript",
-				() => `Where a skill asks for this conversation's transcript, call ${SNAPSHOT_TOOL} and use the path it returns.`,
+				() => `This conversation's transcript, for skills such as show-me: ${storeDir} (show-me asks this running agent for the live branch at that moment).`,
 			),
 			section("cwd", (input) => resources.cwdOf(input).replace(/\\/g, "/")),
 		],
@@ -250,8 +251,7 @@ export function createAgentRegistry(
 	const registry = createRegistry();
 	for (const extension of extra.first ?? []) registry.install(extension);
 	registry.install(CodingTools);
-	registry.install(createPiPrompt(resources));
-	registry.install(createConversationSnapshotExtension(storeDir));
+	registry.install(createPiPrompt(resources, storeDir));
 	for (const extension of extra.after ?? []) registry.install(extension);
 	return registry;
 }

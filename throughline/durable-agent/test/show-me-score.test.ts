@@ -7,8 +7,7 @@ import { exitCode, type RunFacts, scoreRun } from "../proof/show-me-score.ts";
 const retained = "We need to pick how the build caches results. I lean toward the in-process LRU because it adds no service to run.";
 const withdrawn = "Decision on the build cache: use the Redis service for build caching, it is the cache we pick.";
 const good: RunFacts = {
-	snapshotBeforeBuild: true,
-	buildTranscriptIsSnapshot: true,
+	buildReadsOwner: true,
 	buildSucceeded: true,
 	checkSucceeded: true,
 	publishedCheckedBytes: true,
