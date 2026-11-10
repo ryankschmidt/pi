@@ -2,13 +2,12 @@
 // shipped subscription-images module, copied by the installer into `capabilities/subscription-images/` beside this
 // program and pinned with it, so a later ship of that module never changes a running install. An absent, unloadable
 // or incompatible copy never stops the agent: it starts without the tools and says why. The installer refuses such a
-// copy before it switches an install in, using the same check.
+// copy before it switches an install in, using the same loader plus the installer's schema check.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { compile, type JsonSchema } from "@earendil-works/pi-schema";
-import { Errors, type XSchema } from "typebox/schema";
 import {
 	defineExtension,
 	defineTool,
@@ -41,10 +40,9 @@ export async function loadImageTools(defaultCwd: string, dir = IMAGE_MODULE_DIR)
 	return { extension: defineExtension({ name: EXTENSION_NAME, tools: built }), empty, missing: undefined };
 }
 
-/** Undefined when the copy at `dir` gives working image tools; otherwise why not. The installer refuses on a reason. */
-export async function imageModuleProblem(dir: string): Promise<string | undefined> {
-	const built = await buildImageTools(dir, dir);
-	return typeof built === "string" ? built : undefined;
+/** The image tools the copy at `dir` gives, through the same loader and checks as the start; otherwise why not. */
+export async function imageModuleTools(dir: string): Promise<ToolRegistration[] | string> {
+	return await buildImageTools(dir, dir);
 }
 
 // Loading, checking the exported contract and building the tools sit inside one boundary: whatever the copy does wrong
@@ -90,10 +88,8 @@ function toolsOf(exports: Record<string, unknown>, defaultCwd: string): ToolRegi
 		const schema = parameters[name];
 		if (typeof description !== "string" || description.length === 0) throw new Error(`${name} has no description`);
 		if (!isRecord(schema) || schema.type !== "object" || !isRecord(schema.properties)) throw new Error(`${name} has no object parameter schema`);
-		// Providers check tool schemas on every request, so one malformed schema breaks every request of every thread. The
-		// schema must be a valid JSON Schema (draft 2020-12 meta-schema, every keyword and nested schema), and Pi's own
-		// compiler, which validates the tool's arguments at run time, must accept it.
-		metaSchemaProblem(schema, name);
+		// Pi's own compiler validates the tool's arguments at run time, so it must accept the schema. The full JSON Schema
+		// check runs in the installer, on the read-only copy this program loads (install/runtime.ts).
 		compile(schema as JsonSchema);
 		return defineTool({
 			name,
@@ -106,20 +102,6 @@ function toolsOf(exports: Record<string, unknown>, defaultCwd: string): ToolRegi
 			},
 		} as never);
 	});
-}
-
-// The published draft 2020-12 meta-schema and its vocabularies, checked with typebox's JSON Schema engine (typebox is
-// the coding agent's own runtime dependency). A complete validator replaces a hand-written walk of some keywords.
-const META = JSON.parse(readFileSync(new URL("./json-schema-2020-12.json", import.meta.url), "utf8")) as { schemas: { $id: string }[] };
-const META_CONTEXT = Object.fromEntries(META.schemas.map((schema) => [schema.$id, schema])) as Record<string, XSchema>;
-const META_ROOT = META_CONTEXT["https://json-schema.org/draft/2020-12/schema"] as XSchema;
-
-/** Throws, naming the first offending place, when `schema` is not a valid draft 2020-12 JSON Schema. */
-function metaSchemaProblem(schema: Record<string, unknown>, name: string): void {
-	const [valid, errors] = Errors(META_CONTEXT, META_ROOT, schema);
-	if (valid) return;
-	const first = errors.find((error) => error.keyword !== "anyOf") ?? errors[0];
-	throw new Error(`${name}${first?.instancePath ?? ""} is not valid JSON Schema (${first?.message ?? "rejected by the meta-schema"})`);
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

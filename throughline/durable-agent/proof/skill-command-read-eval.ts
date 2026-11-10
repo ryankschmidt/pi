@@ -2,7 +2,7 @@
 // folder and the pinned show-me, against real models through the tower broker. Each run is a fresh store. Pass: every
 // command run's first tool call is `read` on the command's listed file; the plain message triggers no read.
 //   node proof/skill-command-read-eval.ts --out <results.json> [--runs 10] [--models anthropic/claude-opus-5-5,openai-codex/gpt-6.1-terra]
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,17 +69,9 @@ async function run(model: string, testCase: Case, index: number) {
 		// The first stored answer decides: its first tool call, or none. Stop the run there to keep runs short.
 		while (first === undefined && Date.now() - started < 240_000) {
 			await new Promise((resolve) => setTimeout(resolve, 400));
-			const file = join(root, "store/transcript.jsonl");
-			if (!existsSync(file)) continue;
-			for (const line of readFileSync(file, "utf8").split("\n")) {
-				if (!line.trim()) continue;
-				let entry: { kind?: string; model?: { content?: unknown }[] } | undefined;
-				try {
-					entry = (JSON.parse(line) as { entry?: typeof entry }).entry;
-				} catch {
-					continue;
-				}
-				if (entry?.kind !== "pi.assistant") continue;
+			const page = (await program.call("entries", { limit: 100 })) as { items: { kind?: string; model?: { content?: unknown }[] }[] };
+			for (const entry of page.items) {
+				if (entry.kind !== "pi.assistant") continue;
 				const content = (entry.model?.[0]?.content ?? []) as { type: string; name?: string; arguments?: { path?: string } }[];
 				const call = content.find((part) => part.type === "toolCall");
 				first = call ? { name: call.name ?? "", ...(call.arguments?.path ? { path: call.arguments.path } : {}) } : null;

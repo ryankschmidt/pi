@@ -37,7 +37,9 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { loadSkills } from "@earendil-works/pi-coding-agent";
-import { imageModuleProblem } from "../src/image-tools.ts";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { imageModuleTools } from "../src/image-tools.ts";
 
 export const PIN_SCHEMA = "throughline.pi-durable-agent-pin.v1";
 const HOME = homedir();
@@ -135,6 +137,27 @@ function skillProblem(file: string, name: string): string | undefined {
 	return undefined;
 }
 
+/**
+ * Undefined when every image tool schema is a valid draft 2020-12 JSON Schema that Ajv compiles strictly (each
+ * `required` name defined in its `properties`); otherwise the first tool and place that is not. Providers check tool
+ * schemas on every request, so one malformed schema would break every request of every new thread.
+ */
+function imageSchemaProblem(tools: readonly ToolRegistration[]): string | undefined {
+	const ajv = new Ajv2020({ strictSchema: true, strictRequired: true, strictTypes: false, logger: false });
+	for (const tool of tools) {
+		if (!ajv.validateSchema(tool.parameters)) {
+			const first = ajv.errors?.find((error) => error.keyword !== "anyOf") ?? ajv.errors?.[0];
+			return `${tool.name}${first?.instancePath ?? ""} is not valid JSON Schema (${first?.message ?? "rejected by the meta-schema"})`;
+		}
+		try {
+			ajv.compile(tool.parameters);
+		} catch (error) {
+			return `${tool.name} is not a usable JSON Schema (${error instanceof Error ? error.message : String(error)})`;
+		}
+	}
+	return undefined;
+}
+
 export function readPin(runtime: string): Pin | null {
 	const file = join(runtime, "current", "Pin.json");
 	return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Pin) : null;
@@ -185,9 +208,11 @@ export async function install(
 	for (const name of IMAGE_FILES) execFileSync("cp", [join(imageModule, name), join(target, IMAGE_COPY, name)]);
 	mkdirSync(dirname(join(target, SHOW_ME_COPY)), { recursive: true });
 	execFileSync("cp", [showMe, join(target, SHOW_ME_COPY)]);
-	// The same check the agent runs at start, on the bytes this install will run: the copied files, not their source
-	// (a source that loads only beside files the install does not copy is refused here).
-	const imageProblem = await imageModuleProblem(join(target, IMAGE_COPY));
+	// The same loader and checks the agent runs at start, on the bytes this install will run: the copied files, not their
+	// source (a source that loads only beside files the install does not copy is refused here). Then the full JSON
+	// Schema check, which only the installer runs: the agent loads nothing but this read-only copy.
+	const checked = await imageModuleTools(join(target, IMAGE_COPY));
+	const imageProblem = typeof checked === "string" ? checked : imageSchemaProblem(checked);
 	if (imageProblem !== undefined) {
 		throw new Error(
 			`refused: ${imageProblem}; the new copy is left unused at ${target}; current is unchanged.\n` +

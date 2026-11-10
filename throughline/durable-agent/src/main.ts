@@ -65,14 +65,15 @@ if (values["runtime-mode"]) approvals.mode = values["runtime-mode"] as RuntimeMo
 const toolLink = new ToolLink();
 const descriptors: ToolDescriptor[] = values.tools ? JSON.parse(readFileSync(resolve(values.tools), "utf8")) : [];
 const tools = createThroughLineToolsExtension(descriptors, toolLink);
-const resources = new AgentResources(settings, cwd, join(resolve(values.store), "transcript.jsonl"));
+const storeDir = resolve(values.store);
+const resources = new AgentResources(settings, cwd);
 if (!existsSync(join(PINNED_SKILLS_DIR, "show-me/SKILL.md"))) {
 	log(`skill commands: no pinned show-me at ${join(PINNED_SKILLS_DIR, "show-me/SKILL.md")}; /show-me is listed as a command only if pi's skills list it`);
 }
 const images = await loadImageTools(cwd);
 if (images.missing !== undefined) log(images.missing);
 const registryWith = (imageExtension: typeof images.extension) =>
-	createAgentRegistry(resources, {
+	createAgentRegistry(resources, storeDir, {
 		// Claude Code's standard prompt renders before every other section.
 		first: [createClaudeStandardPromptExtension((provider, modelId) => models.getModel(provider, modelId)?.api)],
 		after: [
@@ -93,7 +94,7 @@ try {
 	registry = registryWith(images.empty);
 }
 const code = await runProgram({
-	storeDir: resolve(values.store),
+	storeDir,
 	agentId: values.agent,
 	initialAgent: {
 		cwd,

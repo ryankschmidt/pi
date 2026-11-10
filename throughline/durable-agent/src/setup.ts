@@ -35,6 +35,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { createConversationSnapshotExtension, SNAPSHOT_TOOL } from "./conversation-snapshot.ts";
 
 export { ModelRuntime, SettingsManager };
 
@@ -85,13 +86,10 @@ export class AgentResources {
 	readonly #fallbackCwd: string;
 	readonly #folders = new Map<string, FolderResources>();
 	#append: string | undefined | null = null;
-	/** The agent's transcript.jsonl beside its store, named in the prompt so a skill such as show-me can read the turns. */
-	readonly transcript: string | undefined;
 
-	constructor(settings: SettingsManager, fallbackCwd: string, transcript?: string) {
+	constructor(settings: SettingsManager, fallbackCwd: string) {
 		this.#settings = settings;
 		this.#fallbackCwd = fallbackCwd;
-		this.transcript = transcript;
 	}
 
 	/** The working folder a request's prompt is built for. */
@@ -228,10 +226,9 @@ export function createPiPrompt(resources: AgentResources) {
 				const text = [formatSkillsForPrompt(skills, "read").trim(), commandsText(skills)].filter((part) => part.length > 0).join("\n\n");
 				return text.length > 0 ? text : undefined;
 			}),
-			section("transcript", () =>
-				resources.transcript === undefined
-					? undefined
-					: `This conversation's transcript (Pi Durable's projection of every stored entry, all branches; the last binding line names the live conversation): ${resources.transcript}`,
+			section(
+				"transcript",
+				() => `Where a skill asks for this conversation's transcript, call ${SNAPSHOT_TOOL} and use the path it returns.`,
 			),
 			section("cwd", (input) => resources.cwdOf(input).replace(/\\/g, "/")),
 		],
@@ -244,12 +241,14 @@ export function createPiPrompt(resources: AgentResources) {
  */
 export function createAgentRegistry(
 	resources: AgentResources,
+	storeDir: string,
 	extra: { first?: readonly Extension[]; after?: readonly Extension[] } = {},
 ): Registry {
 	const registry = createRegistry();
 	for (const extension of extra.first ?? []) registry.install(extension);
 	registry.install(CodingTools);
 	registry.install(createPiPrompt(resources));
+	registry.install(createConversationSnapshotExtension(storeDir));
 	for (const extension of extra.after ?? []) registry.install(extension);
 	return registry;
 }

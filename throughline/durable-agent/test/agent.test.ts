@@ -157,15 +157,19 @@ async function turn(program: AgentProgram, content: string, requestId: string): 
 }
 
 type Stored = { kind: string; id: number; model?: { role: string; content: unknown }[] };
-/** The entries the agent stored, read from its transcript projection: what ThroughLine and show-me read. */
-const storedEntries = (root: string): Stored[] =>
-	readFileSync(join(root, "store/transcript.jsonl"), "utf8")
-		.split("\n")
-		.filter((line) => line.trim().length > 0)
-		.map((line) => JSON.parse(line) as { entry?: Stored })
-		.flatMap((line) => (line.entry ? [line.entry] : []));
-const storedUserTexts = (root: string) =>
-	storedEntries(root)
+/** The entries the bound conversation shows, through the program's own `entries` call: what ThroughLine reads. */
+async function storedEntries(program: AgentProgram): Promise<Stored[]> {
+	const all: Stored[] = [];
+	let cursor: unknown;
+	do {
+		const page = (await program.call("entries", { limit: 100, ...(cursor === undefined ? {} : { cursor }) })) as { items: Stored[]; next?: unknown };
+		all.push(...page.items);
+		cursor = page.next;
+	} while (cursor !== undefined && cursor !== null);
+	return all;
+}
+const storedUserTexts = async (program: AgentProgram) =>
+	(await storedEntries(program))
 		.filter((entry) => entry.kind === "pi.user")
 		.map((entry) => entry.model?.[0]?.content)
 		.map((content) => (typeof content === "string" ? content : JSON.stringify(content)));
@@ -199,8 +203,23 @@ test("the prompt carries APPEND_SYSTEM.md once, the project context and Pi and D
 	const durableReadme = /Pi Durable: (\S+README\.md)/.exec(system)?.[1];
 	assert.ok(durableReadme !== undefined && existsSync(durableReadme), `Pi Durable's README is named and exists (${durableReadme})`);
 	assert.ok(existsSync(getDocsPath()));
-	// The prompt names this agent's transcript, so show-me can read the turns.
-	assert.match(system, /This conversation's transcript [^\n]*store\/transcript\.jsonl/);
+	await stop(program);
+});
+
+test("the prompt sends a skill that wants the transcript to conversation_snapshot, and the tool writes the conversation without an approval question", { timeout: 60_000 }, async () => {
+	const model = await modelEndpoint([{ tool: "conversation_snapshot", args: {} }, { text: "written" }]);
+	const program = layout(model.port, { images: "none" }).start();
+	const questions: string[] = [];
+	program.onQuestion((question) => questions.push(JSON.stringify(question)));
+	await program.hello;
+	assert.equal(await turn(program, "Show the plan.", "t1"), "done", program.stderr());
+	const system = systemText(model.bodies[0] as RequestBody);
+	assert.match(system, /<transcript>\s*Where a skill asks for this conversation's transcript, call conversation_snapshot and use the path it returns\.\s*<\/transcript>/);
+	assert.doesNotMatch(system, /transcript\.jsonl|\/store\//, "no file path is named");
+	assert.ok((model.bodies[0]?.tools ?? []).some((tool) => tool.function.name === "conversation_snapshot"), "the model is offered conversation_snapshot");
+	const path = /"(\/[^"]*\/snapshots\/[^"]*\.jsonl)"/.exec(JSON.stringify(model.bodies[1]?.messages))?.[1];
+	assert.ok(path !== undefined && readFileSync(path, "utf8").includes("Show the plan."), "the tool result names a file holding the conversation");
+	assert.deepEqual(questions, [], "approval-required mode asks nothing for it");
 	await stop(program);
 });
 
@@ -232,11 +251,10 @@ test("a command's skill body is the read result stored in its run: replayed unch
 	await first.hello;
 	assert.equal(await turn(first, "/show-me the plan", "k1"), "done", first.stderr());
 	assert.match(JSON.stringify(model.bodies[1]?.messages), /BODY-AS-READ/, "the next request carries the body as a tool result");
-	await stop(first);
-
 	// One stored record of the turn, as typed; nothing else stands in for it.
-	assert.deepEqual(storedUserTexts(setup.root), ["/show-me the plan"]);
-	assert.equal(storedEntries(setup.root).filter((entry) => !entry.kind.startsWith("pi.")).length, 0, "no record outside Durable's own kinds");
+	assert.deepEqual(await storedUserTexts(first), ["/show-me the plan"]);
+	assert.equal((await storedEntries(first)).filter((entry) => !entry.kind.startsWith("pi.")).length, 0, "no record outside Durable's own kinds");
+	await stop(first);
 
 	writeFileSync(setup.showMe, "---\nname: show-me\ndescription: Show.\ndisable-model-invocation: true\n---\nBODY-AFTER-EDIT\n");
 	const second = setup.start();
@@ -247,7 +265,7 @@ test("a command's skill body is the read result stored in its run: replayed unch
 	assert.doesNotMatch(resent, /BODY-AFTER-EDIT/);
 	assert.equal(userTexts(model.bodies.at(-1) as RequestBody)[0], "/show-me the plan");
 
-	const answer = storedEntries(setup.root).find((entry) => entry.kind === "pi.assistant" && JSON.stringify(entry.model).includes("shown"));
+	const answer = (await storedEntries(second)).find((entry) => entry.kind === "pi.assistant" && JSON.stringify(entry.model).includes("shown"));
 	await second.call("fork", { entryId: answer?.id });
 	assert.equal(await turn(second, "in the fork", "k3"), "done", second.stderr());
 	const forked = JSON.stringify(model.bodies.at(-1)?.messages);
@@ -291,7 +309,7 @@ test("an absent, unloadable or incompatible image module never stops the agent: 
 		["exports the wrong names", { shared: "export const unrelated = 1;\n", effects: "export const other = 2;\n" }, /does not provide usable image tools \(imageToolDescriptions is not an object\)/],
 		["lacks two of the three tools", imageCopy(["inspect_image"]), /the copy lacks generate_image, edit_image/],
 		["a tool without an object schema", imageCopy(["generate_image", "edit_image", "inspect_image"], { inspect_image: { type: "object" } }), /inspect_image has no object parameter schema/],
-		["an invalid schema inside a combinator", imageCopy(["generate_image", "edit_image", "inspect_image"], { generate_image: { type: "object", properties: { prompt: { anyOf: [{ type: "not-a-json-schema-type" }] } } } }), /generate_image\/properties\/prompt\/anyOf\/0\/type is not valid JSON Schema/],
+		["a property schema that is not a schema", imageCopy(["generate_image", "edit_image", "inspect_image"], { generate_image: { type: "object", properties: { prompt: 5 } } }), /A schema must be an object or a boolean, got 5/],
 		["an unknown extra tool, such as one named like a coding tool", imageCopy(["generate_image", "edit_image", "inspect_image", "read"]), /does not know: read/],
 	];
 	for (const [name, images, reason] of cases) {
@@ -303,4 +321,16 @@ test("an absent, unloadable or incompatible image module never stops the agent: 
 		assert.match(program.stderr(), reason, name);
 		await stop(program);
 	}
+});
+
+test("an install-shaped copy without the old schema data file starts with image tools and answers", { timeout: 60_000 }, async () => {
+	// Rereview4-1 #2 and 4-2 #3: a missing data file the image loader read at import stopped the whole agent.
+	const model = await modelEndpoint([{ text: "ok" }]);
+	const setup = layout(model.port, { images: "shipped" });
+	rmSync(join(setup.root, "throughline/durable-agent/src/json-schema-2020-12.json"), { force: true });
+	const program = setup.start();
+	await program.hello;
+	assert.equal(await turn(program, "hello", "j1"), "done", program.stderr());
+	assert.ok((model.bodies[0]?.tools ?? []).some((tool) => tool.function.name === "generate_image"), "the image tools are offered");
+	await stop(program);
 });

@@ -2,7 +2,7 @@
 // store, and record what Pi Durable did. Map v3 section 9-5 says what should happen.
 //   PI_CODING_AGENT_DIR=<agent dir> node proof/kill-proof.ts <run dir> <evidence dir> [model]
 
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,20 +87,6 @@ function describe(entries: Json[]) {
 	});
 }
 
-async function transcriptLines(store: string) {
-	const text = await readFile(join(store, "transcript.jsonl"), "utf8");
-	return { text, lines: text.trim().split("\n").map((l) => JSON.parse(l) as Json) };
-}
-
-function checkTranscript(lines: Json[], entries: Json[]) {
-	const ids = lines.filter((l) => l.entry).map((l) => Number(l.entry.id));
-	const unique = new Set(ids).size === ids.length;
-	const ordered = ids.every((id, i) => i === 0 || id > ids[i - 1]!);
-	const storeIds = entries.map((e) => Number(e.id));
-	const complete = storeIds.every((id) => ids.includes(id));
-	return { entryLines: ids.length, conversationLines: lines.filter((l) => l.conversation).length, unique, ordered, complete };
-}
-
 const results: Json = { model, startedAt: new Date().toISOString() };
 
 // ── 1. Kill mid-answer, after bash finished ───────────────────────────────────────────────────────────
@@ -137,14 +123,12 @@ const results: Json = { model, startedAt: new Date().toISOString() };
 	first.kill();
 	const killedExit = await first.exited;
 	note(`s1: killed mid-answer (exit ${killedExit}); ${shownBeforeKill} chars had been shown`);
-	const before = await transcriptLines(store);
 	const restarted = await launch("proof-mid-answer", store, cwd);
 	const settled = (await restarted.call("wait", { submissionId })) as Json;
 	note(`s1: after restart the question settled: ${settled.status}`);
 	const entries = await allEntries(restarted);
 	await restarted.call("drain");
 	await restarted.exited;
-	const after = await transcriptLines(store);
 	const proofFile = existsSync(join(cwd, "proof.txt")) ? await readFile(join(cwd, "proof.txt"), "utf8") : "";
 	const described = describe(entries);
 	const assistants = described.filter((e) => e.role === "assistant");
@@ -158,14 +142,7 @@ const results: Json = { model, startedAt: new Date().toISOString() };
 		completedAnswers: assistants.filter((e) => e.stopReason === "stop").map((e) => ({ id: e.id, chars: e.chars })),
 		bashResults: described.filter((e) => e.kind === "pi.tool-result").length,
 		proofFileLines: proofFile.split("\n").filter((l) => l === "answer-proof").length,
-		transcript: {
-			bytesBeforeRestart: before.text.length,
-			bytesAfter: after.text.length,
-			appendedOnly: after.text.startsWith(before.text),
-			...checkTranscript(after.lines, entries),
-		},
 	};
-	await copyFile(join(store, "transcript.jsonl"), join(evidenceDir, "s1-transcript.jsonl"));
 	await writeFile(join(evidenceDir, "s1-stderr-first.txt"), first.stderr());
 	await writeFile(join(evidenceDir, "s1-stderr-restarted.txt"), restarted.stderr());
 }
@@ -200,7 +177,6 @@ const results: Json = { model, startedAt: new Date().toISOString() };
 	await new Promise((r) => setTimeout(r, 16_000));
 	const proofFile = await readFile(join(cwd, "proof.txt"), "utf8");
 	const described = describe(entries);
-	const after = await transcriptLines(store);
 	results.midBash = {
 		killedExit,
 		settled: settled.status,
@@ -209,9 +185,7 @@ const results: Json = { model, startedAt: new Date().toISOString() };
 		bashStarts: proofFile.split("\n").filter((l) => l.startsWith("start-")).length,
 		bashEnds: proofFile.split("\n").filter((l) => l.startsWith("end-")).length,
 		proofFile,
-		transcript: checkTranscript(after.lines, entries),
 	};
-	await copyFile(join(store, "transcript.jsonl"), join(evidenceDir, "s2-transcript.jsonl"));
 	await writeFile(join(evidenceDir, "s2-stderr-restarted.txt"), restarted.stderr());
 }
 

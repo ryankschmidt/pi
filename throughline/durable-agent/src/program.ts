@@ -37,7 +37,6 @@ import {
 	type ProgramMessage,
 } from "./protocol.ts";
 import type { ApprovalAnswer, Approvals, RuntimeMode, ToolLink } from "./throughline-extensions.ts";
-import { attachTranscript, type TranscriptWriter } from "./transcript.ts";
 
 export const DURABLE_VERSION: string = (() => {
 	const entry = createRequire(import.meta.url).resolve("@earendil-works/pi-durable");
@@ -72,7 +71,7 @@ const Binding = defineDoc<StoredBinding>({
 });
 
 export type ProgramOptions = {
-	/** Folder holding the store, its lock and transcript.jsonl. */
+	/** Folder holding the store and its lock. */
 	storeDir: string;
 	agentId: string;
 	/** What the root conversation starts with when the store is new. */
@@ -121,7 +120,6 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 	}
 
 	let harness: Harness | undefined;
-	let transcript: TranscriptWriter | undefined;
 	const watches = new Map<string, ConversationWatch>();
 	let stopping: Promise<number> | undefined;
 
@@ -135,7 +133,6 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		stopping = (async () => {
 			for (const watch of watches.values()) await watch.stop().catch(() => undefined);
 			watches.clear();
-			transcript?.detach();
 			if (harness) await harness.close(context);
 			await lock.release();
 			return finish(code);
@@ -150,8 +147,6 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			{ ...options.harness, onReport: (report) => log(`durable report: ${report.kind} ${String(report.error)}`) },
 			context,
 		);
-		// Before root() and resume(): nothing commits between the catch-up and the observer.
-		transcript = await attachTranscript(harness, join(options.storeDir, "transcript.jsonl"), context);
 		const opened = harness;
 		const binding = await opened.snapshot(Binding, context);
 		if (binding?.agentId != null && binding.agentId !== options.agentId) {
@@ -162,8 +157,6 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			const found = await opened.conversation(binding.conversationId as ConversationId, context);
 			if (found === undefined) throw new Error("BOUND_CONVERSATION_MISSING");
 			conversation = found;
-			// Every start projects the stored binding, so a crash between a fork and its binding line leaves this as the last.
-			transcript?.bound(conversation.id);
 		} else {
 			conversation = await opened.root(context, { agent: options.initialAgent });
 			await bind(conversation.id);
@@ -174,7 +167,6 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				stored.agentId = options.agentId;
 				stored.conversationId = id;
 			}, context);
-			transcript?.bound(id);
 		}
 		if (options.carryFrom !== undefined) {
 			const summary = await carrySession(opened, conversation, options.carryFrom, options.storeDir, context);

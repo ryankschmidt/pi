@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { check, install, readPin, rollback } from "../install/runtime.ts";
+import { check, install, readPin, rollback, SHIPPED_IMAGE_MODULE } from "../install/runtime.ts";
 
 /** A tiny stand-in for the Pi fork: one workspace package with dist, a node_modules link to it, the agent entry. */
 function fakeFork(): string {
@@ -114,18 +114,31 @@ test("the image module is pinned inside the install: missing or incompatible ref
 	const nested: [unknown, RegExp][] = [
 		[{ type: "object", properties: { prompt: { type: "not-a-json-schema-type" } } }, /generate_image\/properties\/prompt\/type is not valid JSON Schema/],
 		[{ type: "object", properties: { prompt: { type: "string" } }, required: "prompt" }, /generate_image\/required is not valid JSON Schema/],
-		[{ type: "object", properties: { prompt: 5 } }, /generate_image\/properties\/prompt is not valid JSON Schema/],
+		[{ type: "object", properties: { prompt: 5 } }, /A schema must be an object or a boolean, got 5\); the new copy is left unused/],
 		// The rereview 3 cases (all three reviewers): inside a combinator, an empty type list, a keyword of the wrong type,
 		// and a bad schema under $defs.
 		[{ type: "object", properties: { prompt: { anyOf: [{ type: "not-a-json-schema-type" }, { type: "string" }] } } }, /generate_image\/properties\/prompt\/anyOf\/0\/type is not valid JSON Schema/],
 		[{ type: "object", properties: { prompt: { type: [] } } }, /generate_image\/properties\/prompt\/type is not valid JSON Schema/],
 		[{ type: "object", properties: { prompt: { type: "string", minLength: "bad" } } }, /generate_image\/properties\/prompt\/minLength is not valid JSON Schema/],
 		[{ type: "object", properties: {}, $defs: { size: { type: "nope" } } }, /generate_image\/\$defs\/size\/type is not valid JSON Schema/],
+		// Rereview4-1 #3: a required name with no property is legal JSON Schema but breaks the contract, at any depth.
+		[{ type: "object", properties: { prompt: { type: "string" } }, required: ["ghost"] }, /generate_image is not a usable JSON Schema \(strict mode: required property "ghost" is not defined/],
+		[{ type: "object", properties: { size: { type: "object", properties: {}, required: ["width"] } } }, /generate_image is not a usable JSON Schema \(strict mode: required property "width" is not defined/],
 	];
 	for (const [schema, reason] of nested) {
 		await assert.rejects(install(fork, runtime, null, { imageModule: fakeImageModule(IMAGE_TOOLS, { generate_image: schema }), showMe }), reason);
 		assert.equal(readPin(runtime)?.id, pin.id);
 	}
+	// A nested schema whose required names are its properties installs; so does the shipped module.
+	const valid = { type: "object", properties: { size: { type: "object", properties: { width: { type: "integer" } }, required: ["width"] } }, required: ["size"] };
+	execFileSync("git", ["-C", fork, "checkout", "--", "."]);
+	assert.notEqual((await install(fork, runtime, null, { imageModule: fakeImageModule(IMAGE_TOOLS, { generate_image: valid }), showMe })).id, pin.id);
+	const pinnedShipped = fileURLToPath(new URL("../capabilities/subscription-images", import.meta.url));
+	const shipped = existsSync(pinnedShipped) ? pinnedShipped : SHIPPED_IMAGE_MODULE;
+	if (existsSync(join(shipped, "shared.mjs"))) await install(fork, runtime, null, { imageModule: shipped, showMe });
+	rollback(runtime);
+	if (existsSync(join(shipped, "shared.mjs"))) rollback(runtime);
+	assert.equal(readPin(runtime)?.id, pin.id);
 	// The check runs on the copied files: this source loads only beside a file the install does not copy.
 	const leaning = fakeImageModule();
 	writeFileSync(join(leaning, "helper.mjs"), "export const ready = true;\n");

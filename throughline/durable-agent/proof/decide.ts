@@ -24,10 +24,6 @@ const facts: Record<string, { ok: boolean; why: string }> = {
 		why: "a kill during bash must give the model an interrupted result and never start bash a second time",
 	},
 	secondRefused: { ok: m.secondProgram.exit === 3 && /STORE_ALREADY_OWNED/.test(m.secondProgram.refused), why: "two programs on one store would corrupt it" },
-	transcriptAppendOnly: {
-		ok: ["appendedOnly", "unique", "ordered", "complete"].every((k) => m.transcript[k] === true) && b.transcript.unique && b.transcript.complete,
-		why: "transcript.jsonl must be one appended file holding every entry once, in order, or readers lose turns",
-	},
 	steerThenFollowUp: {
 		ok: (() => {
 			const e = s.entries as Json[];

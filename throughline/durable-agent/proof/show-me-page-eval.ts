@@ -1,11 +1,14 @@
-// Real-model eval of a whole /show-me run (Rereview3-2 #3): past the first answer, until the model publishes a page or
-// gives up. The real agent program with Ryan's Pi agent folder and the pinned show-me, real models through the tower
-// broker, a fresh store per run. ThroughLine's html_render tool is supplied and recorded here; every other tool is the
-// agent's own. The thread first states a decision in plain words, then Ryan types the command.
+// Real-model eval of a whole /show-me run (Rereview3-2 #3, Rereview4-2 #2): past the first answer, until the model
+// publishes a page or gives up. The real agent program with Ryan's Pi agent folder and the pinned show-me, real models
+// through the tower broker, a fresh store per run. ThroughLine's html_render_file and html_render are supplied and
+// recorded here (html_render_file refuses bytes whose SHA-256 differs, as ThroughLine's does); every other tool is the
+// agent's own. The thread first states a decision in plain words, then Ryan types the command. One extra run per model
+// is a rewound thread: the withdrawn turn holds the most on-topic sentence, and the page must never quote it.
 //   node proof/show-me-page-eval.ts --out <results.json> [--runs 10] [--models a,b] [--parallel 4]
-// Per run it records: the command turn's first tool call; whether show-me's build and check commands ran and succeeded;
-// whether html_render received a page show-me built (it carries <meta name="show-me-words">); the words line the page
-// quotes; the time taken. The run is stopped after the first html_render or after 15 minutes.
+// A run passes only when: conversation_snapshot ran before build and build's --transcript is the path it returned;
+// build and check each have a stored, successful result; the bytes published through html_render_file hash to the
+// passing check's publish sha256; and no plain html_render call was made. A missing result is a failure.
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -27,11 +30,23 @@ const AGENT_DIR = fileURLToPath(new URL("..", import.meta.url));
 const CONTEXT =
 	"We need to pick how the build caches results: a Redis service, an in-process LRU cache, or no cache. I lean toward the in-process LRU because it adds no service to run. Just acknowledge this in one line for now.";
 const COMMAND = "/show-me the choice of build cache";
+// The rewound case: this turn is withdrawn by a rewind before the command, so its sentence must never be the words line.
+const WITHDRAWN = "Decision on the build cache: use the Redis service for build caching, it is the cache we pick. Just acknowledge this in one line.";
 const HTML_RENDER = {
 	name: "html_render",
 	description: "Show an HTML page inline in Ryan's ThroughLine thread.",
 	inputSchema: { type: "object", properties: { html: { type: "string" }, title: { type: "string" }, height: { type: "number" } }, required: ["html"] },
 };
+const HTML_RENDER_FILE = {
+	name: "html_render_file",
+	description: "Show a checked HTML page file inline in this thread if its bytes hash to sha256. Pass the publish fields of a passing show-me check.",
+	inputSchema: {
+		type: "object",
+		properties: { file: { type: "string" }, sha256: { type: "string" }, title: { type: "string" }, height: { type: "integer" } },
+		required: ["file", "sha256", "title", "height"],
+	},
+};
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const RUN_LIMIT_MS = 15 * 60_000;
 
 const within = <T>(promise: Promise<T>, ms: number, what: string): Promise<T> =>
@@ -49,7 +64,7 @@ function layout() {
 	while (!existsSync(join(up, "node_modules/@earendil-works/pi-durable"))) up = dirname(up);
 	symlinkSync(join(up, "node_modules"), join(root, "node_modules"));
 	mkdirSync(join(root, "work"));
-	writeFileSync(join(root, "tools.json"), JSON.stringify([HTML_RENDER]));
+	writeFileSync(join(root, "tools.json"), JSON.stringify([HTML_RENDER_FILE, HTML_RENDER]));
 	return { programDir, root, showMe: realpathSync(showMe) };
 }
 
@@ -59,7 +74,7 @@ async function turn(program: AgentProgram, content: string, id: string, ms: numb
 }
 
 type Stored = { id: number; kind: string; model?: { role: string; content: unknown; toolCallId?: string; isError?: boolean }[] };
-async function run(model: string, index: number) {
+async function run(model: string, index: number, rewound: boolean) {
 	const { programDir, root, showMe } = layout();
 	const program = startProgram(
 		process.execPath,
@@ -67,6 +82,7 @@ async function run(model: string, index: number) {
 		{},
 	);
 	const renders: { html: string; title?: string }[] = [];
+	const fileRenders: { file: string; sha256: string; html: string | null; refused: boolean }[] = [];
 	let published: () => void = () => {};
 	const publishedOnce = new Promise<void>((resolve) => {
 		published = resolve;
@@ -77,6 +93,19 @@ async function run(model: string, index: number) {
 			renders.push({ html: String(args.html ?? ""), ...(args.title ? { title: args.title } : {}) });
 			program.answerTool(call.id, { content: [{ type: "text", text: "The page is shown in the thread." }] });
 			published();
+		} else if (call.name === "html_render_file") {
+			const fileArgs = (call.arguments ?? {}) as { file?: string; sha256?: string };
+			let html: string | null = null;
+			try {
+				html = readFileSync(String(fileArgs.file), "utf8");
+			} catch {}
+			const refused = html === null || sha256(html) !== fileArgs.sha256;
+			fileRenders.push({ file: String(fileArgs.file), sha256: String(fileArgs.sha256), html, refused });
+			if (refused) program.answerTool(call.id, { content: [{ type: "text", text: "Refused: the page file's bytes do not match sha256." }], isError: true });
+			else {
+				program.answerTool(call.id, { content: [{ type: "text", text: "Shown to the reader above your reply." }] });
+				published();
+			}
 		} else program.answerTool(call.id, { content: [{ type: "text", text: `${call.name} is not available in this run` }], isError: true });
 	});
 	const started = Date.now();
@@ -85,17 +114,22 @@ async function run(model: string, index: number) {
 	try {
 		await within(program.hello, 60_000, "no hello");
 		await turn(program, CONTEXT, "context", 5 * 60_000);
-		commandFrom = entries(root).at(-1)?.id ?? 0;
+		if (rewound) {
+			await turn(program, WITHDRAWN, "withdrawn", 5 * 60_000);
+			const withdrawn = (await entries(program)).find((entry) => entry.kind === "pi.user" && JSON.stringify(entry.model).includes("Redis service for build caching"));
+			if (withdrawn === undefined) throw new Error("the withdrawn turn was not stored");
+			await program.call("forkBefore", { entryId: withdrawn.id });
+		}
+		commandFrom = (await entries(program)).at(-1)?.id ?? 0;
 		const { submissionId } = (await program.call("submit", { content: COMMAND, requestId: "command" })) as { submissionId: number };
 		await Promise.race([program.call("wait", { submissionId }), publishedOnce, new Promise((resolve) => setTimeout(resolve, RUN_LIMIT_MS))]);
 		await within(program.call("abort"), 10_000, "abort").catch(() => undefined);
 	} catch (caught) {
 		error = caught instanceof Error ? caught.message : String(caught);
-	} finally {
-		program.kill();
 	}
-	// Read what the run did from its own stored entries.
-	const stored = entries(root).filter((entry) => entry.id > commandFrom);
+	// Read what the run did from its own stored entries, through the program's entries call, before stopping it.
+	const stored = (await entries(program).catch(() => [] as Stored[])).filter((entry) => entry.id > commandFrom);
+	program.kill();
 	const calls = stored.flatMap((entry) =>
 		entry.kind === "pi.assistant"
 			? ((entry.model?.[0]?.content ?? []) as { type: string; id?: string; name?: string; arguments?: Record<string, unknown> }[]).filter((part) => part.type === "toolCall")
@@ -104,10 +138,25 @@ async function run(model: string, index: number) {
 	const result = (id: string | undefined) =>
 		stored.find((entry) => entry.model?.[0]?.role === "toolResult" && entry.model[0].toolCallId === id)?.model?.[0];
 	const bashOf = (pattern: RegExp) => calls.filter((call) => call.name === "bash" && pattern.test(String(call.arguments?.command ?? "")));
-	const succeeded = (list: typeof calls) => list.some((call) => result(call.id)?.isError !== true && !/exit code [1-9]|Error:/.test(JSON.stringify(result(call.id)?.content ?? "")));
+	// A call counts only with a stored result that is not an error and shows no failed exit.
+	const ok = (call: (typeof calls)[number]) => {
+		const answer = result(call.id);
+		return answer !== undefined && answer.isError !== true && !/exit code [1-9]|Error:/.test(JSON.stringify(answer.content ?? ""));
+	};
+	const succeeded = (list: typeof calls) => list.length > 0 && list.every(ok);
+	const textOf = (call: (typeof calls)[number] | undefined) => JSON.stringify(result(call?.id)?.content ?? "");
 	const builds = bashOf(/show-me\/dist\/cli\.js build/);
 	const checks = bashOf(/show-me\/dist\/cli\.js check/);
-	const page = renders.find((render) => render.html.includes('name="show-me-words"'));
+	const snapshots = calls.filter((call) => call.name === "conversation_snapshot");
+	const snapshotPath = /(\/[^"\\]*\/snapshots\/\d+-\d+\.jsonl)/.exec(textOf(snapshots.at(-1)))?.[1];
+	const buildIndex = calls.findIndex((call) => builds.includes(call));
+	const snapshotBeforeBuild = snapshots.length > 0 && calls.indexOf(snapshots[0] as (typeof calls)[number]) < buildIndex;
+	const transcriptArg = /--transcript\s+("([^"]+)"|'([^']+)'|(\S+))/.exec(String(builds.at(-1)?.arguments?.command ?? ""));
+	const buildTranscript = transcriptArg?.[2] ?? transcriptArg?.[3] ?? transcriptArg?.[4];
+	const checkSha = /\\?"publish\\?":\s*\{[^}]*?\\?"sha256\\?":\s*\\?"([0-9a-f]{64})/.exec(textOf(checks.at(-1)))?.[1];
+	const shown = fileRenders.filter((render) => !render.refused);
+	const published_checked_bytes = checkSha !== undefined && shown.length > 0 && shown.every((render) => render.html !== null && sha256(render.html) === checkSha);
+	const page = shown.at(-1) ? { html: shown.at(-1)?.html ?? "" } : undefined;
 	// The page records its words line as base64 JSON {text, time, picked}: picked means not found among the user's turns.
 	const encoded = page ? /<meta name="show-me-words" content="([^"]*)"/.exec(page.html)?.[1] : undefined;
 	const words = encoded ? (JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as { text: string; picked: boolean }) : null;
@@ -121,9 +170,17 @@ async function run(model: string, index: number) {
 		build_succeeded: succeeded(builds),
 		check_ran: checks.length > 0,
 		check_succeeded: succeeded(checks),
+		rewound,
+		snapshot_before_build: snapshotBeforeBuild,
+		build_transcript_is_snapshot: snapshotPath !== undefined && buildTranscript === snapshotPath,
 		html_render_calls: renders.length,
-		published_show_me_page: page !== undefined,
+		html_render_file_calls: fileRenders.length,
+		html_render_file_refused: fileRenders.filter((render) => render.refused).length,
+		published_checked_bytes,
+		passed:
+			snapshotBeforeBuild && snapshotPath !== undefined && buildTranscript === snapshotPath && succeeded(builds) && succeeded(checks) && published_checked_bytes && renders.length === 0,
 		words_from_user_turn: words !== null && words.picked === false && CONTEXT.includes(words.text),
+		words_never_withdrawn: words === null || !WITHDRAWN.includes(words.text),
 		page_words: words,
 		tool_calls: calls.length,
 		seconds: Math.round((Date.now() - started) / 1000),
@@ -132,24 +189,23 @@ async function run(model: string, index: number) {
 	};
 }
 
-function entries(root: string): Stored[] {
-	const file = join(root, "store/transcript.jsonl");
-	if (!existsSync(file)) return [];
-	return readFileSync(file, "utf8")
-		.split("\n")
-		.filter((line) => line.trim())
-		.flatMap((line) => {
-			try {
-				const entry = (JSON.parse(line) as { entry?: Stored }).entry;
-				return entry ? [entry] : [];
-			} catch {
-				return [];
-			}
-		});
+/** Every entry the bound conversation shows, through the program's own entries call. */
+async function entries(program: AgentProgram): Promise<Stored[]> {
+	const all: Stored[] = [];
+	let cursor: unknown;
+	do {
+		const page = (await within(program.call("entries", { limit: 100, ...(cursor === undefined ? {} : { cursor }) }), 30_000, "entries")) as { items: Stored[]; next?: unknown };
+		all.push(...page.items);
+		cursor = page.next;
+	} while (cursor !== undefined && cursor !== null);
+	return all;
 }
 
 const jobs: (() => ReturnType<typeof run>)[] = [];
-for (const model of (values.models as string).split(",")) for (let i = 0; i < Number(values.runs); i++) jobs.push(() => run(model, i));
+for (const model of (values.models as string).split(",")) {
+	for (let i = 0; i < Number(values.runs); i++) jobs.push(() => run(model, i, false));
+	jobs.push(() => run(model, Number(values.runs), true));
+}
 const results: Awaited<ReturnType<typeof run>>[] = [];
 let next = 0;
 await Promise.all(
@@ -158,7 +214,7 @@ await Promise.all(
 			const result = await (jobs[next++] as () => ReturnType<typeof run>)();
 			results.push(result);
 			process.stdout.write(
-				`${result.published_show_me_page ? "PAGE" : "NO-PAGE"} ${result.model} #${result.run} read-first=${result.read_skill_first} build=${result.build_ran}/${result.build_succeeded} check=${result.check_ran}/${result.check_succeeded} renders=${result.html_render_calls} ${result.seconds}s${result.error ? ` ${result.error}` : ""}\n`,
+				`${result.passed ? "PASS" : "FAIL"} ${result.model} #${result.run}${result.rewound ? " rewound" : ""} snapshot=${result.snapshot_before_build}/${result.build_transcript_is_snapshot} build=${result.build_succeeded} check=${result.check_succeeded} checked-bytes=${result.published_checked_bytes} file-renders=${result.html_render_file_calls}(refused ${result.html_render_file_refused}) plain-renders=${result.html_render_calls} words-not-withdrawn=${result.words_never_withdrawn} ${result.seconds}s${result.error ? ` ${result.error}` : ""}\n`,
 			);
 		}
 	}),
@@ -167,10 +223,10 @@ const count = (model: string, key: keyof (typeof results)[number]) => `${results
 const summary = Object.fromEntries(
 	[...new Set(results.map((r) => r.model))].map((model) => [
 		model,
-		{ read_skill_first: count(model, "read_skill_first"), build_succeeded: count(model, "build_succeeded"), check_ran: count(model, "check_ran"), published_show_me_page: count(model, "published_show_me_page"), words_from_user_turn: count(model, "words_from_user_turn") },
+		{ passed: count(model, "passed"), read_skill_first: count(model, "read_skill_first"), snapshot_before_build: count(model, "snapshot_before_build"), build_transcript_is_snapshot: count(model, "build_transcript_is_snapshot"), build_succeeded: count(model, "build_succeeded"), check_succeeded: count(model, "check_succeeded"), published_checked_bytes: count(model, "published_checked_bytes"), words_never_withdrawn: count(model, "words_never_withdrawn") },
 	]),
 );
-writeFileSync(values.out as string, `${JSON.stringify({ schema: "durable-agent.show-me-page-eval.v1", ran_at: new Date().toISOString(), context: CONTEXT, command: COMMAND, summary, results }, null, 2)}\n`);
+writeFileSync(values.out as string, `${JSON.stringify({ schema: "durable-agent.show-me-page-eval.v2", ran_at: new Date().toISOString(), context: CONTEXT, command: COMMAND, summary, results }, null, 2)}\n`);
 console.log(JSON.stringify(summary, null, 1));
 // A killed agent's detached children can keep the event loop alive; the results are written, so end here.
 process.exit(0);
