@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { type AgentProgram, startProgram } from "../src/client.ts";
-import { ENGINE, encode, type Hello, lineSplitter, PROTOCOL_VERSION } from "../src/protocol.ts";
+import { ENGINE, PROTOCOL_VERSION } from "../src/protocol.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/faux-program.ts", import.meta.url));
 const toolsFixture = fileURLToPath(new URL("./fixtures/faux-tools-program.ts", import.meta.url));
@@ -142,85 +142,66 @@ test("a ThroughLine tool call leaves on the link with the stock tool name and it
 	await program.exited;
 });
 
-/** A reader of the program's read socket, found through the store's owner.lock (as show-me finds it). */
-async function openOwner(store: string): Promise<{ hello: Hello; call(method: string, params?: Record<string, unknown>): Promise<unknown>; page(): Promise<Stored[]>; close(): void }> {
-	const owner = JSON.parse(await readFile(join(store, "owner.lock"), "utf8")) as { socket?: string };
-	assert.ok(owner.socket, "the owner record names the read socket");
-	const socket = connect(owner.socket);
-	const waiting = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-	let greeted: (hello: Hello) => void = () => undefined;
-	const hello = new Promise<Hello>((resolve) => (greeted = resolve));
-	socket.setEncoding("utf8");
-	socket.on(
-		"data",
-		lineSplitter((line) => {
-			const message = JSON.parse(line) as { kind: string; id?: string; value?: unknown; message?: string; code?: string };
-			if (message.kind === "hello") return greeted(message as unknown as Hello);
-			const pending = message.id === undefined ? undefined : waiting.get(message.id);
-			if (pending === undefined) return;
-			waiting.delete(message.id as string);
-			if (message.kind === "result") pending.resolve(message.value);
-			else pending.reject(new Error(`${message.code}: ${message.message}`));
-		}),
-	);
-	await new Promise<void>((resolve, reject) => {
-		socket.once("connect", () => resolve());
-		socket.once("error", reject);
+type Reply = { kind: string; code?: string; message?: string; value?: { store: string; conversationId: number; lastEntryId: number; items: Stored[]; more: boolean } };
+type OwnerRecord = { pid: number; reads?: { state: string; socket?: string; reason?: string } };
+const ownerRecord = async (store: string) => JSON.parse(await readFile(join(store, "owner.lock"), "utf8")) as OwnerRecord;
+/** One request on one connection to the socket the store's owner record names (as show-me asks it). */
+async function ask(store: string, params: Record<string, unknown> = {}): Promise<Reply> {
+	const socket = (await ownerRecord(store)).reads?.socket;
+	assert.ok(socket, "the owner record names a ready read socket");
+	return await new Promise<Reply>((resolve, reject) => {
+		const client = connect(socket);
+		let data = "";
+		client.setEncoding("utf8");
+		client.on("connect", () => client.write(`${JSON.stringify({ kind: "call", id: "1", method: "entries", params })}\n`));
+		client.on("data", (chunk: string) => (data += chunk));
+		client.on("error", reject);
+		client.on("close", () => resolve(JSON.parse(data.split("\n")[0] ?? "null") as Reply));
 	});
-	socket.write(encode({ kind: "hello", protocol: PROTOCOL_VERSION, engine: ENGINE, version: "test", pid: process.pid }));
-	let serial = 0;
-	const call = (method: string, params: Record<string, unknown> = {}) =>
-		new Promise<unknown>((resolve, reject) => {
-			const id = `r${++serial}`;
-			waiting.set(id, { resolve, reject });
-			socket.write(`${JSON.stringify({ kind: "call", id, method, params })}\n`);
-		});
-	const page = async () => {
-		const all: Stored[] = [];
-		let cursor: unknown;
-		do {
-			const result = (await call("entries", { limit: 2, ...(cursor === undefined ? {} : { cursor }) })) as { items: Stored[]; next?: unknown };
-			all.push(...result.items);
-			cursor = result.next;
-		} while (cursor !== undefined && cursor !== null);
-		return all;
-	};
-	return { hello: await hello, call, page, close: () => socket.destroy() };
 }
+/** The whole live branch, page by page, fixed to the first page's conversation and last entry. */
+async function readOwner(store: string): Promise<Stored[]> {
+	const first = await ask(store);
+	assert.equal(first.kind, "result", JSON.stringify(first));
+	const items = [...(first.value?.items ?? [])];
+	let more = first.value?.more;
+	while (more) {
+		const page = await ask(store, { conversationId: first.value?.conversationId, lastEntryId: first.value?.lastEntryId, after: items.at(-1)?.id });
+		assert.equal(page.kind, "result", JSON.stringify(page));
+		items.push(...(page.value?.items ?? []));
+		more = page.value?.more;
+	}
+	return items;
+}
+const STORE_FILES = ["owner.lock", "owner-reads.v1", "store.sqlite", "store.sqlite-wal", "store.sqlite-shm"];
 
-// Design brief 5, note B (build round 12): the agent answers its own `entries` method on a read socket whose path is
-// in owner.lock. A connection pins the conversation bound at its hello, so it never mixes branches and never shows a
-// withdrawn turn that was not live at that moment.
-test("the read socket named in owner.lock serves the live branch with the link's entries; a rewind shows to new readers, a pinned reader keeps its branch whole", async () => {
+// Design brief 5, note B (build rounds 12 and 13): the agent answers reads on a socket its owner record names; each
+// connection carries one request; a read is fixed to the bound conversation and its last entry at the first page.
+test("the read socket serves the live branch the link shows; after a rewind a read shows the new branch; a read continued across the rewind is refused", async () => {
 	const { store, cwd } = await fresh();
 	const program = startBash(store, cwd);
 	await program.hello;
 	await turn(program, "Retained choice.", "a");
 	await turn(program, "Withdrawn choice.", "b");
-	const before = await openOwner(store);
-	assert.equal(before.hello.store, store);
-	assert.deepEqual((await before.page()).map((entry) => entry.id), (await storedEntries(program)).map((entry) => entry.id), "the socket's entries equal the link's");
+	const first = await ask(store);
+	assert.equal(first.value?.store, store);
+	assert.deepEqual((await readOwner(store)).map((entry) => entry.id), (await storedEntries(program)).map((entry) => entry.id), "the socket's entries equal the link's");
 	const withdrawn = (await storedEntries(program)).find((entry) => userText(entry) === "Withdrawn choice.");
 	assert.ok(withdrawn);
 	await program.call("forkBefore", { entryId: withdrawn.id });
 	await turn(program, "Replacement choice.", "c");
-	const after = await openOwner(store);
-	const live = await after.page();
+	const live = await readOwner(store);
 	assert.deepEqual(live.map((entry) => entry.id), (await storedEntries(program)).map((entry) => entry.id));
 	assert.deepEqual(live.filter((entry) => entry.kind === "pi.user").map(userText), ["Retained choice.", "Replacement choice."]);
-	assert.equal(after.hello.conversationId, Number(((await program.call("status")) as { conversationId: number }).conversationId), "hello pins the bound conversation");
-	const pinned = await before.page();
-	assert.ok(pinned.some((entry) => userText(entry) === "Withdrawn choice.") && !pinned.some((entry) => userText(entry) === "Replacement choice."), "a reader pinned before the rewind keeps the earlier branch whole, nothing of the new one");
-	await assert.rejects(after.call("submit", { content: "x", requestId: "z" }), /READ_ONLY_LINK/);
-	before.close();
-	after.close();
-	assert.deepEqual((await readdir(store)).filter((name) => !["owner.lock", "store.sqlite", "store.sqlite-wal", "store.sqlite-shm"].includes(name)), [], "a read writes nothing in the store folder");
+	const continued = await ask(store, { conversationId: first.value?.conversationId, lastEntryId: first.value?.lastEntryId, after: 0 });
+	assert.equal(continued.code, "REWOUND", "a read begun before the rewind cannot finish with the withdrawn branch");
+	assert.deepEqual((await readdir(store)).filter((name) => !STORE_FILES.includes(name)), [], "a read writes nothing in the store folder");
 	await program.call("drain");
 	await program.exited;
 });
 
 // The real path: a command the model runs (as a show-me skill body tells it to) reads the socket its own owner names.
-test("a command the agent runs reads its own live branch through the socket named in owner.lock", async () => {
+test("a command the agent runs reads its own live branch through the socket its owner record names", async () => {
 	const { store, cwd } = await fresh();
 	await writeFile(join(cwd, "read-owner.mjs"), READ_OWNER_SCRIPT);
 	const program = startBash(store, cwd);
@@ -233,28 +214,59 @@ test("a command the agent runs reads its own live branch through the socket name
 	await program.exited;
 });
 
-// A crash leaves a record whose socket nobody answers; the next start writes a record whose socket answers; a clean
-// stop removes both the socket and the record.
-test("after a kill the stale record's socket does not answer; a restart's does; a clean stop removes the socket", async () => {
+// Item 1 (Rereview12-1 #1, 12-2 #1, 12-3 #1): the first start marks the store for good, so a stopped store is never
+// mistaken for an older agent's; the marker survives a clean stop and a kill; a crash leaves a record whose socket
+// nobody answers; a clean stop removes the socket and the record.
+test("the first start marks the store for good; after a kill the stale socket does not answer; a restart's does; a clean stop removes socket and record, never the marker", async () => {
 	const { store, cwd } = await fresh();
 	const first = startBash(store, cwd);
 	await first.hello;
+	assert.ok(existsSync(join(store, "owner-reads.v1")), "the first start writes the marker");
 	await turn(first, "Before the kill.", "a");
-	const stale = (JSON.parse(await readFile(join(store, "owner.lock"), "utf8")) as { socket: string }).socket;
+	const stale = (await ownerRecord(store)).reads?.socket;
+	assert.ok(stale);
 	first.kill();
 	await first.exited;
 	await assert.rejects(new Promise((resolve, reject) => connect(stale).once("connect", resolve).once("error", reject)), /ECONNREFUSED|ENOENT/);
+	assert.ok(existsSync(join(store, "owner-reads.v1")), "the marker survives a kill");
 	const second = startBash(store, cwd);
 	await second.hello;
-	const reader = await openOwner(store);
-	assert.notEqual(JSON.parse(await readFile(join(store, "owner.lock"), "utf8")).socket, stale);
-	assert.ok((await reader.page()).some((entry) => userText(entry) === "Before the kill."));
-	reader.close();
-	const current = (JSON.parse(await readFile(join(store, "owner.lock"), "utf8")) as { socket: string }).socket;
+	assert.notEqual((await ownerRecord(store)).reads?.socket, stale);
+	assert.ok((await readOwner(store)).some((entry) => userText(entry) === "Before the kill."));
+	const current = (await ownerRecord(store)).reads?.socket;
 	await second.call("drain");
 	await second.exited;
-	assert.ok(!existsSync(current), "the socket is removed at stop");
+	assert.ok(current !== undefined && !existsSync(current), "the socket is removed at stop");
 	assert.ok(!existsSync(join(store, "owner.lock")), "and the record with it");
+	assert.ok(existsSync(join(store, "owner-reads.v1")), "the marker survives a clean stop");
+});
+
+test("a start refused by a live owner leaves the store unmarked", async () => {
+	const { store, cwd } = await fresh();
+	await mkdir(store, { recursive: true });
+	// An older agent's record: a live process (this test runner), no reads field.
+	await writeFile(join(store, "owner.lock"), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), nonce: "older" }));
+	const program = startBash(store, cwd);
+	await assert.rejects(program.hello, /STORE_ALREADY_OWNED/);
+	await program.exited;
+	assert.ok(!existsSync(join(store, "owner-reads.v1")), "an older agent's running store is not marked");
+});
+
+// Item 2 (Rereview12-1 #2): the read socket is an add-on; when it cannot be created the agent starts and works, the
+// owner record says reads are unavailable and why (show-me refuses with that reason), and the failure is logged.
+test("when the read socket cannot be created the agent still starts and works; the owner record and the log say why", async () => {
+	const { store, cwd } = await fresh();
+	const program = startProgram(process.execPath, [bashFixture, store, cwd], { env: { ...process.env, TMPDIR: join(cwd, "no-such-folder") } });
+	started.push(program);
+	await program.hello;
+	await turn(program, "Works without the socket.", "a");
+	const record = await ownerRecord(store);
+	assert.equal(record.reads?.state, "unavailable");
+	assert.match(record.reads?.reason ?? "", /read socket could not be created: .*ENOENT/);
+	assert.match(program.stderr(), /show-me cannot read this thread from the agent: the read socket could not be created/);
+	assert.ok((await storedEntries(program)).some((entry) => userText(entry) === "Works without the socket."));
+	await program.call("drain");
+	await program.exited;
 });
 
 // Rereview10/11: the new program never reads, writes, moves or removes an older agent's transcript.jsonl.
@@ -275,22 +287,14 @@ test("an upgraded store's transcript.jsonl is left untouched by the new program"
 const READ_OWNER_SCRIPT = `import { readFileSync } from "node:fs";
 import { connect } from "node:net";
 const store = process.argv[2];
-const socket = connect(JSON.parse(readFileSync(store + "/owner.lock", "utf8")).socket);
+const socket = connect(JSON.parse(readFileSync(store + "/owner.lock", "utf8")).reads.socket);
 let buffer = "";
 socket.setEncoding("utf8");
-socket.on("connect", () => {
-	socket.write(JSON.stringify({ kind: "hello", protocol: 2, engine: "pi-durable", version: "probe", pid: process.pid }) + "\\n");
-	socket.write(JSON.stringify({ kind: "call", id: "1", method: "entries", params: { limit: 500 } }) + "\\n");
-});
-socket.on("data", (chunk) => {
-	buffer += chunk;
-	for (const line of buffer.split("\\n").slice(0, -1)) {
-		const message = JSON.parse(line);
-		if (message.kind !== "result") continue;
-		const texts = message.value.items.filter((e) => e.kind === "pi.user").map((e) => JSON.stringify(e.model[0].content));
-		console.log("owner read: " + texts.join(" | "));
-		socket.destroy();
-	}
-	buffer = buffer.slice(buffer.lastIndexOf("\\n") + 1);
+socket.on("connect", () => socket.write(JSON.stringify({ kind: "call", id: "1", method: "entries", params: {} }) + "\\n"));
+socket.on("data", (chunk) => (buffer += chunk));
+socket.on("close", () => {
+	const message = JSON.parse(buffer.split("\\n")[0]);
+	const texts = message.value.items.filter((e) => e.kind === "pi.user").map((e) => JSON.stringify(e.model[0].content));
+	console.log("owner read: " + texts.join(" | "));
 });
 `;

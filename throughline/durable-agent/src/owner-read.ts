@@ -1,88 +1,174 @@
-// The agent's read socket: a reader on this host (show-me) asks the running program for its thread's live branch with
-// the program's own `entries` method, the one ThroughLine already calls over the link. The socket's path is written in
-// the store's owner.lock, so it belongs to the live owner: a crash leaves a record whose socket nobody answers, and the
-// next start writes a new record. Read-only: hello, then `entries` against the conversation bound at that hello. A
-// conversation's visible range never loses or changes an entry (a rewind makes a new conversation), so paging a pinned
-// conversation returns the branch that was live at hello, never a withdrawn turn and never two branches mixed.
+// The agent's read socket: a reader on this host (show-me) asks the running program for its thread's live branch. The
+// socket's path is written in the store's owner.lock, so it belongs to the live owner. Each connection carries exactly
+// one `entries` request and one reply, then closes; every step has a size limit and a deadline, so a reader can neither
+// hold the agent's memory or database nor wait forever on a broken owner. A read is a page of the bound conversation up
+// to a fixed last entry: the first page fixes it, later pages name the same conversation and last entry, and a rewind
+// between pages is refused (REWOUND) so the reader starts again. A conversation's visible range never loses or changes
+// an entry, so the pages together are exactly the branch that stayed live for the whole read.
 
-import { randomUUID } from "node:crypto";
-import { chmodSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Conversation } from "@earendil-works/pi-durable";
-import { ENGINE, encode, type Hello, isClientMessage, lineSplitter, PROTOCOL_VERSION, type ProgramMessage } from "./protocol.ts";
+import type { Context } from "@earendil-works/chord";
+import type { Conversation, EntryId } from "@earendil-works/pi-durable";
+import { encode, type ProgramMessage } from "./protocol.ts";
+
+/** One page of a read: the conversation and last entry it is fixed to, the entries after `after`, and whether more follow. */
+export type ReadPage = { store: string; conversationId: number; lastEntryId: number; items: unknown[]; more: boolean };
+export type OwnerReads = { readonly socket: string; close(): Promise<void> };
+
+/** Limits of one connection; a request is a few numbers, a reply is one page. */
+export type ReadLimits = {
+	requestBytes: number;
+	replyBytes: number;
+	pageEntries: number;
+	requestTimeoutMs: number;
+	replyTimeoutMs: number;
+	connections: number;
+};
+export const READ_LIMITS: ReadLimits = {
+	requestBytes: 64 * 1024,
+	replyBytes: 64 * 1024 * 1024,
+	pageEntries: 200,
+	requestTimeoutMs: 5_000,
+	replyTimeoutMs: 30_000,
+	connections: 16,
+};
 
 /**
- * A socket path for this process, under the per-user temporary folder: store folders reach 149 characters, past the
- * macOS socket path limit (about 104 bytes), so the path lives in the owner record instead of beside the store.
+ * Listen on a socket in a new private folder under the per-user temporary folder (store folders reach 149 characters,
+ * past the macOS socket path limit, so the path lives in the owner record) and answer one `entries` request per
+ * connection. Throws if the socket cannot be created; the program then runs without it (program.ts).
  */
-export function ownerSocketPath(): string {
-	return join(tmpdir(), `pi-durable-${process.pid}-${randomUUID().slice(0, 8)}.sock`);
-}
-
-/** Listen on `path` (mode 0600) and answer read-only `entries` calls; `close` stops listening and removes the socket. */
 export async function serveOwnerReads(
-	path: string,
-	helloFor: (conversation: Conversation) => Hello,
+	store: string,
 	current: () => Conversation,
-	readEntries: (conversation: Conversation, params: Record<string, unknown>) => Promise<unknown>,
-): Promise<{ close(): Promise<void> }> {
+	context: Context,
+	limits: ReadLimits = READ_LIMITS,
+): Promise<OwnerReads> {
+	// mkdtemp makes the folder 0700 before the socket exists, so no other user can reach the socket at any moment.
+	const folder = mkdtempSync(join(tmpdir(), "pi-durable-"));
+	const socketPath = join(folder, "read.sock");
 	const open = new Set<Socket>();
 	const server = createServer((socket) => {
 		open.add(socket);
 		socket.on("close", () => open.delete(socket));
-		let pinned: Conversation | undefined;
-		const send = (message: ProgramMessage) => {
-			if (!socket.destroyed) socket.write(encode(message));
-		};
-		socket.setEncoding("utf8");
-		socket.on("error", () => socket.destroy());
-		socket.on(
-			"data",
-			lineSplitter((line) => {
-				let message: unknown;
-				try {
-					message = JSON.parse(line);
-				} catch {
-					send({ kind: "error", code: "BAD_MESSAGE", message: "a line was not JSON" });
-					return;
-				}
-				if (!isClientMessage(message)) return send({ kind: "error", code: "BAD_MESSAGE", message: "unknown message kind" });
-				if (message.kind === "hello") {
-					if (message.protocol !== PROTOCOL_VERSION || message.engine !== ENGINE) {
-						send({ kind: "error", code: "PROTOCOL_MISMATCH", message: `program speaks ${ENGINE} protocol ${PROTOCOL_VERSION}` });
-						return socket.end();
-					}
-					pinned = current();
-					return send(helloFor(pinned));
-				}
-				if (message.kind !== "call") return;
-				if (pinned === undefined) return send({ kind: "error", id: message.id, code: "HELLO_REQUIRED", message: "send hello first" });
-				if (message.method !== "entries") {
-					return send({ kind: "error", id: message.id, code: "READ_ONLY_LINK", message: "this socket answers only entries" });
-				}
-				readEntries(pinned, message.params ?? {}).then(
-					(value) => send({ kind: "result", id: message.id, value: value ?? null }),
-					(error: unknown) => send({ kind: "error", id: message.id, code: "FAILED", message: error instanceof Error ? error.message : String(error) }),
-				);
-			}),
-		);
+		answerOne(socket, store, current, context, limits);
 	});
-	// A file at this path can only be a leftover of an earlier process with this pid; this process holds the store lock.
-	rmSync(path, { force: true });
-	await new Promise<void>((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(path, () => resolve());
-	});
-	chmodSync(path, 0o600);
+	server.maxConnections = limits.connections;
+	try {
+		await new Promise<void>((resolve, reject) => {
+			server.once("error", reject);
+			server.listen(socketPath, () => resolve());
+		});
+	} catch (error) {
+		rmSync(folder, { recursive: true, force: true });
+		throw error;
+	}
 	return {
+		socket: socketPath,
 		close: () =>
 			new Promise<void>((resolve) => {
 				server.close(() => resolve());
 				// A reader still connected must not hold the program open at stop.
 				for (const socket of open) socket.destroy();
-				rmSync(path, { force: true });
+				rmSync(folder, { recursive: true, force: true });
 			}),
 	};
+}
+
+/** Read one request line within the limits, answer it, and close; anything after the first line is ignored. */
+function answerOne(socket: Socket, store: string, current: () => Conversation, context: Context, limits: ReadLimits): void {
+	let buffer = "";
+	let answered = false;
+	const reply = (message: ProgramMessage) => {
+		if (!socket.destroyed) socket.end(encode(message));
+	};
+	socket.setEncoding("utf8");
+	socket.setTimeout(limits.requestTimeoutMs, () => socket.destroy());
+	socket.on("error", () => socket.destroy());
+	socket.on("data", (chunk: string) => {
+		if (answered) return;
+		buffer += chunk;
+		const end = buffer.indexOf("\n");
+		if (end < 0) {
+			if (buffer.length > limits.requestBytes) {
+				answered = true;
+				reply({ kind: "error", code: "REQUEST_TOO_LARGE", message: `a request is at most ${limits.requestBytes} bytes` });
+			}
+			return;
+		}
+		answered = true;
+		socket.setTimeout(limits.replyTimeoutMs, () => socket.destroy());
+		const request = parseRequest(buffer.slice(0, end));
+		if ("error" in request) return reply({ kind: "error", code: "BAD_REQUEST", message: request.error });
+		readPage(store, current(), request.params, context, limits).then(
+			(page) => reply({ kind: "result", id: request.id, value: page }),
+			(error: unknown) =>
+				reply({
+					kind: "error",
+					id: request.id,
+					code: error instanceof ReadRefused ? error.code : "FAILED",
+					message: error instanceof Error ? error.message : String(error),
+				}),
+		);
+	});
+}
+
+type Params = { conversationId?: number; lastEntryId?: number; after: number };
+
+/** The one request a connection may carry: `{kind:"call", id, method:"entries", params:{conversationId?, lastEntryId?, after?}}`. */
+function parseRequest(line: string): { id: string; params: Params } | { error: string } {
+	let message: unknown;
+	try {
+		message = JSON.parse(line);
+	} catch {
+		return { error: "the request was not JSON" };
+	}
+	if (typeof message !== "object" || message === null) return { error: "the request was not an object" };
+	const { kind, id, method, params } = message as { kind?: unknown; id?: unknown; method?: unknown; params?: Record<string, unknown> };
+	if (kind !== "call" || typeof id !== "string") return { error: "send one call with an id" };
+	if (method !== "entries") return { error: "this socket answers only entries" };
+	const number = (value: unknown) => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined);
+	const conversationId = number(params?.conversationId);
+	const lastEntryId = number(params?.lastEntryId);
+	if ((conversationId === undefined) !== (lastEntryId === undefined)) return { error: "conversationId and lastEntryId go together" };
+	return { id, params: { ...(conversationId === undefined ? {} : { conversationId, lastEntryId }), after: number(params?.after) ?? 0 } };
+}
+
+class ReadRefused extends Error {
+	readonly code: string;
+	constructor(code: string, message: string) {
+		super(message);
+		this.code = code;
+	}
+}
+
+/** One page of the bound conversation up to its last entry (fixed by the first page), trimmed to the reply limit. */
+async function readPage(store: string, bound: Conversation, params: Params, context: Context, limits: ReadLimits): Promise<ReadPage> {
+	const conversationId = Number(bound.id);
+	if (params.conversationId !== undefined && params.conversationId !== conversationId) {
+		throw new ReadRefused("REWOUND", "the thread was rewound during the read; read it again");
+	}
+	const lastEntryId = params.lastEntryId ?? Number((await bound.entries({ order: "descending" }, 1, undefined, context)).items[0]?.id ?? 0);
+	if (lastEntryId === 0) return { store, conversationId, lastEntryId, items: [], more: false };
+	const page = await bound.entries(
+		{ order: "ascending", minEntryId: (params.after + 1) as EntryId, maxEntryId: lastEntryId as EntryId },
+		limits.pageEntries,
+		undefined,
+		context,
+	);
+	const items: unknown[] = [];
+	let bytes = 0;
+	for (const item of page.items) {
+		const size = Buffer.byteLength(JSON.stringify(item));
+		if (bytes + size > limits.replyBytes) {
+			if (items.length === 0) throw new ReadRefused("ENTRY_TOO_LARGE", `entry ${String(item.id)} is larger than one reply (${limits.replyBytes} bytes)`);
+			return { store, conversationId, lastEntryId, items, more: true };
+		}
+		bytes += size;
+		items.push(item);
+	}
+	return { store, conversationId, lastEntryId, items, more: page.next !== undefined };
 }

@@ -25,7 +25,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { Binding } from "./binding.ts";
 import { carrySession } from "./carry.ts";
 import { lockStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
-import { ownerSocketPath, serveOwnerReads } from "./owner-read.ts";
+import { type OwnerReads, serveOwnerReads } from "./owner-read.ts";
 import { reapLeftovers, startReaper } from "./reaper.ts";
 import {
 	type Call,
@@ -82,6 +82,8 @@ export type ProgramOptions = {
 	carryFrom?: string;
 	/** Kill commands an earlier killed program left running, and watch this one's (see reaper.ts). */
 	reap?: boolean;
+	/** Called when the read socket (owner-read.ts) cannot be created; the program runs on without it. */
+	onReadsUnavailable?: (reason: string) => void;
 	/** Called once the program has stopped, with its exit code. */
 	onExit?: (code: number) => void;
 };
@@ -95,11 +97,9 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		if (!options.output.writableEnded) options.output.write(encode(message));
 	};
 
-	// The read socket's path goes into the owner record, so it belongs to this live owner (owner-read.ts).
-	const socketPath = ownerSocketPath();
 	let lock: StoreLock;
 	try {
-		lock = await lockStore(options.storeDir, socketPath);
+		lock = await lockStore(options.storeDir);
 	} catch (error) {
 		if (error instanceof StoreAlreadyOwned) {
 			send({ kind: "error", code: error.code, message: error.message });
@@ -116,7 +116,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 	}
 
 	let harness: Harness | undefined;
-	let reads: { close(): Promise<void> } | undefined;
+	let reads: OwnerReads | undefined;
 	const watches = new Map<string, ConversationWatch>();
 	let stopping: Promise<number> | undefined;
 
@@ -136,6 +136,26 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			return finish(code);
 		})();
 		return stopping;
+	}
+
+	/**
+	 * The read socket is an add-on: if it cannot be created the agent runs on, the owner record says reads are unavailable
+	 * and why (show-me refuses with that reason instead of reading anything), the thread's prompt says so, and it is logged.
+	 */
+	async function startReads(current: () => Conversation): Promise<OwnerReads | undefined> {
+		let started: OwnerReads | undefined;
+		try {
+			started = await serveOwnerReads(options.storeDir, current, context);
+			await lock.setReads({ state: "ready", socket: started.socket });
+			return started;
+		} catch (error) {
+			await started?.close();
+			const reason = `the read socket could not be created: ${error instanceof Error ? error.message : String(error)}`;
+			log(`show-me cannot read this thread from the agent: ${reason}`);
+			options.onReadsUnavailable?.(reason);
+			await lock.setReads({ state: "unavailable", reason }).catch((failure: unknown) => log(`owner record not updated: ${String(failure)}`));
+			return undefined;
+		}
 	}
 
 	try {
@@ -185,7 +205,6 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			pid: process.pid,
 			conversationId: Number(shown.id),
 		});
-		/** The link's `entries` method; the read socket serves the same call against the conversation it pinned at hello. */
 		const readEntries = (shown: Conversation, params: Record<string, unknown>) =>
 			shown.entries(
 				{
@@ -197,8 +216,8 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				params.cursor as never,
 				context,
 			);
-		// Listening before resume: no command a turn runs can start before the socket its owner record names answers.
-		reads = await serveOwnerReads(socketPath, helloFor, () => conversation, readEntries);
+		// Before resume: no command a turn runs can start before the owner record says whether reads are ready.
+		reads = await startReads(() => conversation);
 		opened.resume();
 
 		send(helloFor(conversation));

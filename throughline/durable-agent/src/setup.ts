@@ -193,7 +193,7 @@ const escapeXml = (text: string) =>
 	text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 
 /** The program's system prompt as one Durable extension: preamble, tools, rules, addendum, context, skills, folder. */
-export function createPiPrompt(resources: AgentResources, storeDir: string) {
+export function createPiPrompt(resources: AgentResources, storeDir: string, readsUnavailable: () => string | undefined = () => undefined) {
 	const ownTools = (input: PromptInput) => input.agent.tools.map((tool) => tool.name).filter((name) => name in TOOL_LINES);
 	return defineExtension({
 		name: PI_PROMPT_NAME,
@@ -229,11 +229,13 @@ export function createPiPrompt(resources: AgentResources, storeDir: string) {
 				return text.length > 0 ? text : undefined;
 			}),
 			// The old show-me body asks for "the transcript path your system prompt names"; the store folder is that path now, and
-			// show-me asks the agent that owns it for the live branch (owner-read.ts).
-			section(
-				"transcript",
-				() => `This conversation's transcript, for skills such as show-me: ${storeDir} (show-me asks this running agent for the live branch at that moment).`,
-			),
+			// show-me asks the agent that owns it for the live branch (owner-read.ts). If the read socket failed, the thread says so.
+			section("transcript", () => {
+				const unavailable = readsUnavailable();
+				return unavailable === undefined
+					? `This conversation's transcript, for skills such as show-me: ${storeDir} (show-me asks this running agent for the live branch at that moment).`
+					: `This conversation's transcript is in ${storeDir}, but show-me cannot read it now: ${unavailable}. show-me will say so if run; tell the user plainly.`;
+			}),
 			section("cwd", (input) => resources.cwdOf(input).replace(/\\/g, "/")),
 		],
 	});
@@ -246,12 +248,12 @@ export function createPiPrompt(resources: AgentResources, storeDir: string) {
 export function createAgentRegistry(
 	resources: AgentResources,
 	storeDir: string,
-	extra: { first?: readonly Extension[]; after?: readonly Extension[] } = {},
+	extra: { first?: readonly Extension[]; after?: readonly Extension[]; readsUnavailable?: () => string | undefined } = {},
 ): Registry {
 	const registry = createRegistry();
 	for (const extension of extra.first ?? []) registry.install(extension);
 	registry.install(CodingTools);
-	registry.install(createPiPrompt(resources, storeDir));
+	registry.install(createPiPrompt(resources, storeDir, extra.readsUnavailable));
 	for (const extension of extra.after ?? []) registry.install(extension);
 	return registry;
 }

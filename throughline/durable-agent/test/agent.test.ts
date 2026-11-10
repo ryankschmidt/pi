@@ -139,11 +139,11 @@ function layout(port: number, options: { images: Images; sameNamedShowMe?: boole
 
 	writeFileSync(join(cwd, "AGENTS.md"), "Project rule: keep answers short.\n");
 	writeFileSync(join(cwd, "pixel.png"), Buffer.from(PIXEL, "base64"));
-	const start = (): AgentProgram => {
+	const start = (env: NodeJS.ProcessEnv = {}): AgentProgram => {
 		const started = startProgram(
 			process.execPath,
 			[join(programDir, "src/main.ts"), "--store", join(root, "store"), "--agent", "real-agent", "--cwd", cwd, "--model", "local/echo"],
-			{ env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1" } },
+			{ env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", ...env } },
 		);
 		programs.push(started);
 		return started;
@@ -216,6 +216,19 @@ test("the prompt names the store folder as the transcript for show-me, and no sn
 	const system = systemText(model.bodies[0] as RequestBody);
 	assert.ok(system.includes(`<transcript>\nThis conversation's transcript, for skills such as show-me: ${hello.store} (show-me asks this running agent for the live branch at that moment).`), system.slice(system.indexOf("<transcript>"), system.indexOf("<transcript>") + 300));
 	assert.ok(!(model.bodies[0]?.tools ?? []).some((tool) => tool.function.name === "conversation_snapshot"), "no snapshot tool");
+	await stop(program);
+});
+
+// Build round 13, item 2: when the read socket cannot be created the agent still answers, and the thread's prompt says
+// plainly that show-me cannot read it now and why, so the thread can tell the user.
+test("when the read socket cannot be created the prompt says show-me cannot read this thread now, and why", { timeout: 60_000 }, async () => {
+	const model = await modelEndpoint([{ text: "written" }]);
+	const setup = layout(model.port, { images: "none" });
+	const program = setup.start({ TMPDIR: join(setup.root, "no-such-folder") });
+	const hello = await program.hello;
+	assert.equal(await turn(program, "Show the plan.", "t1"), "done", program.stderr());
+	const system = systemText(model.bodies[0] as RequestBody);
+	assert.match(system, new RegExp(`<transcript>\\nThis conversation's transcript is in ${hello.store}, but show-me cannot read it now: the read socket could not be created: .*ENOENT`));
 	await stop(program);
 });
 

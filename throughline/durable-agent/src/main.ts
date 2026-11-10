@@ -72,8 +72,11 @@ if (!existsSync(join(PINNED_SKILLS_DIR, "show-me/SKILL.md"))) {
 }
 const images = await loadImageTools(cwd);
 if (images.missing !== undefined) log(images.missing);
+// Set when the read socket cannot be created (program.ts); the prompt then tells the thread.
+let readsUnavailable: string | undefined;
 const registryWith = (imageExtension: typeof images.extension) =>
 	createAgentRegistry(resources, storeDir, {
+		readsUnavailable: () => readsUnavailable,
 		// Claude Code's standard prompt renders before every other section.
 		first: [createClaudeStandardPromptExtension((provider, modelId) => models.getModel(provider, modelId)?.api)],
 		after: [
@@ -106,6 +109,9 @@ const code = await runProgram({
 	tools: toolLink,
 	...(values["carry-from"] ? { carryFrom: resolve(values["carry-from"]) } : {}),
 	reap: true,
+	onReadsUnavailable: (reason) => {
+		readsUnavailable = reason;
+	},
 	input: process.stdin,
 	output: process.stdout,
 	log,

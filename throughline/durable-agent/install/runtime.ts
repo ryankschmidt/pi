@@ -60,6 +60,8 @@ const IMAGE_FILES = ["shared.mjs", "effects.mjs", "check-image-schemas.mjs"];
 const IMAGE_CHECKER = "check-image-schemas.mjs";
 /** The show-me frontmatter field that says it reads a Pi Durable thread from the agent that owns it (owner-read.ts). */
 const SHOW_ME_TRANSCRIPT_FIELD = "pi-durable-transcript";
+/** One request per connection, fixed last entry, marker-aware (build round 13); show-me 2.0.13 spoke the earlier socket. */
+const SHOW_ME_TRANSCRIPT_VALUE = "owner-2";
 /**
  * The shipped show-me skill (Ship Warden's Tier 2 copy of show-me.md); each install pins it as a skill the program
  * loads, so `/show-me` and `/skill:show-me` are listed as commands in every Durable thread without an edit to pi's settings.
@@ -142,8 +144,8 @@ function skillProblem(file: string, name: string): string | undefined {
 	// This program writes no transcript file; a show-me that reads one would find nothing, or stale words, in every
 	// Durable thread. The skill declares where its transcript comes from, and only the owner read is accepted.
 	const { frontmatter } = parseFrontmatter<Record<string, unknown>>(readFileSync(file, "utf8"));
-	if (frontmatter[SHOW_ME_TRANSCRIPT_FIELD] !== "owner") {
-		return `${file} does not declare ${SHOW_ME_TRANSCRIPT_FIELD}: owner, so it would read a transcript file this agent does not keep current (show-me 2.0.12 and older)`;
+	if (frontmatter[SHOW_ME_TRANSCRIPT_FIELD] !== SHOW_ME_TRANSCRIPT_VALUE) {
+		return `${file} does not declare ${SHOW_ME_TRANSCRIPT_FIELD}: ${SHOW_ME_TRANSCRIPT_VALUE}, so it would read a transcript file this agent does not keep current or speak an older read socket (show-me 2.0.13 and older)`;
 	}
 	return undefined;
 }
