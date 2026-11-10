@@ -34,7 +34,7 @@ function fakeFork(): string {
 const cases: [string, string, string][] = [
 	["shipped show-me (today) + Tier 1 images", SHIPPED_SHOW_ME, TIER1_IMAGES],
 	["Tier 1 show-me + shipped images (today)", TIER1_SHOW_ME, SHIPPED_IMAGE_MODULE],
-	["Tier 1 show-me + Tier 1 images 0.2.6", TIER1_SHOW_ME, TIER1_IMAGES],
+	["Tier 1 show-me + Tier 1 images", TIER1_SHOW_ME, TIER1_IMAGES],
 ];
 for (const [label, showMe, imageModule] of cases) {
 	try {
