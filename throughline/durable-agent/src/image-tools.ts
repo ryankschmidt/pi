@@ -4,10 +4,11 @@
 // or incompatible copy never stops the agent: it starts without the tools and says why. The installer refuses such a
 // copy before it switches an install in, using the same check.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { compile, type JsonSchema } from "@earendil-works/pi-schema";
+import { Errors, type XSchema } from "typebox/schema";
 import {
 	defineExtension,
 	defineTool,
@@ -89,9 +90,10 @@ function toolsOf(exports: Record<string, unknown>, defaultCwd: string): ToolRegi
 		const schema = parameters[name];
 		if (typeof description !== "string" || description.length === 0) throw new Error(`${name} has no description`);
 		if (!isRecord(schema) || schema.type !== "object" || !isRecord(schema.properties)) throw new Error(`${name} has no object parameter schema`);
-		schemaProblem(schema, name);
-		// Pi's compiler throws on some malformed schemas but accepts others (an unknown type, a string required), so the
-		// walk above refuses those first; providers check tool schemas on every request, so one bad schema breaks them all.
+		// Providers check tool schemas on every request, so one malformed schema breaks every request of every thread. The
+		// schema must be a valid JSON Schema (draft 2020-12 meta-schema, every keyword and nested schema), and Pi's own
+		// compiler, which validates the tool's arguments at run time, must accept it.
+		metaSchemaProblem(schema, name);
 		compile(schema as JsonSchema);
 		return defineTool({
 			name,
@@ -106,29 +108,18 @@ function toolsOf(exports: Record<string, unknown>, defaultCwd: string): ToolRegi
 	});
 }
 
-const JSON_TYPES: ReadonlySet<string> = new Set(["object", "array", "string", "number", "integer", "boolean", "null"]);
+// The published draft 2020-12 meta-schema and its vocabularies, checked with typebox's JSON Schema engine (typebox is
+// the coding agent's own runtime dependency). A complete validator replaces a hand-written walk of some keywords.
+const META = JSON.parse(readFileSync(new URL("./json-schema-2020-12.json", import.meta.url), "utf8")) as { schemas: { $id: string }[] };
+const META_CONTEXT = Object.fromEntries(META.schemas.map((schema) => [schema.$id, schema])) as Record<string, XSchema>;
+const META_ROOT = META_CONTEXT["https://json-schema.org/draft/2020-12/schema"] as XSchema;
 
-/** Throws at the first part of a JSON Schema tree a provider would reject; `at` names it in the reason. */
-function schemaProblem(schema: Record<string, unknown>, at: string): void {
-	const { type, required, properties, items, additionalProperties } = schema;
-	const types = Array.isArray(type) ? type : type === undefined ? [] : [type];
-	if (types.some((one) => typeof one !== "string" || !JSON_TYPES.has(one))) throw new Error(`${at} has type ${JSON.stringify(type)}, not a JSON type`);
-	if (properties !== undefined && !isRecord(properties)) throw new Error(`${at}.properties is not an object`);
-	if (required !== undefined) {
-		if (!Array.isArray(required) || required.some((name) => typeof name !== "string")) throw new Error(`${at}.required is not a list of names`);
-		const unknown = required.filter((name) => !isRecord(properties) || !(name in properties));
-		if (unknown.length > 0) throw new Error(`${at}.required names ${unknown.join(", ")}, which it does not define`);
-	}
-	const children: [string, unknown][] = [
-		...Object.entries(isRecord(properties) ? properties : {}).map(([key, value]): [string, unknown] => [`${at}.properties.${key}`, value]),
-		...(items === undefined ? [] : [[`${at}.items`, items] as [string, unknown]]),
-		...(additionalProperties === undefined ? [] : [[`${at}.additionalProperties`, additionalProperties] as [string, unknown]]),
-	];
-	for (const [path, child] of children) {
-		if (typeof child === "boolean") continue;
-		if (!isRecord(child)) throw new Error(`${path} is neither a schema object nor a boolean`);
-		schemaProblem(child, path);
-	}
+/** Throws, naming the first offending place, when `schema` is not a valid draft 2020-12 JSON Schema. */
+function metaSchemaProblem(schema: Record<string, unknown>, name: string): void {
+	const [valid, errors] = Errors(META_CONTEXT, META_ROOT, schema);
+	if (valid) return;
+	const first = errors.find((error) => error.keyword !== "anyOf") ?? errors[0];
+	throw new Error(`${name}${first?.instancePath ?? ""} is not valid JSON Schema (${first?.message ?? "rejected by the meta-schema"})`);
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

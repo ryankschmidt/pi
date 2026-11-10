@@ -112,9 +112,15 @@ test("the image module is pinned inside the install: missing or incompatible ref
 	// Nested schemas are checked whole: an unknown type and a string `required` compile in pi's schema compiler, a
 	// property given as a number does not; all three are refused before current moves.
 	const nested: [unknown, RegExp][] = [
-		[{ type: "object", properties: { prompt: { type: "not-a-json-schema-type" } } }, /properties\.prompt has type "not-a-json-schema-type"/],
-		[{ type: "object", properties: { prompt: { type: "string" } }, required: "prompt" }, /required is not a list of names/],
-		[{ type: "object", properties: { prompt: 5 } }, /properties\.prompt is neither a schema object nor a boolean/],
+		[{ type: "object", properties: { prompt: { type: "not-a-json-schema-type" } } }, /generate_image\/properties\/prompt\/type is not valid JSON Schema/],
+		[{ type: "object", properties: { prompt: { type: "string" } }, required: "prompt" }, /generate_image\/required is not valid JSON Schema/],
+		[{ type: "object", properties: { prompt: 5 } }, /generate_image\/properties\/prompt is not valid JSON Schema/],
+		// The rereview 3 cases (all three reviewers): inside a combinator, an empty type list, a keyword of the wrong type,
+		// and a bad schema under $defs.
+		[{ type: "object", properties: { prompt: { anyOf: [{ type: "not-a-json-schema-type" }, { type: "string" }] } } }, /generate_image\/properties\/prompt\/anyOf\/0\/type is not valid JSON Schema/],
+		[{ type: "object", properties: { prompt: { type: [] } } }, /generate_image\/properties\/prompt\/type is not valid JSON Schema/],
+		[{ type: "object", properties: { prompt: { type: "string", minLength: "bad" } } }, /generate_image\/properties\/prompt\/minLength is not valid JSON Schema/],
+		[{ type: "object", properties: {}, $defs: { size: { type: "nope" } } }, /generate_image\/\$defs\/size\/type is not valid JSON Schema/],
 	];
 	for (const [schema, reason] of nested) {
 		await assert.rejects(install(fork, runtime, null, { imageModule: fakeImageModule(IMAGE_TOOLS, { generate_image: schema }), showMe }), reason);

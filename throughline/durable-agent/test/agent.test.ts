@@ -291,7 +291,7 @@ test("an absent, unloadable or incompatible image module never stops the agent: 
 		["exports the wrong names", { shared: "export const unrelated = 1;\n", effects: "export const other = 2;\n" }, /does not provide usable image tools \(imageToolDescriptions is not an object\)/],
 		["lacks two of the three tools", imageCopy(["inspect_image"]), /the copy lacks generate_image, edit_image/],
 		["a tool without an object schema", imageCopy(["generate_image", "edit_image", "inspect_image"], { inspect_image: { type: "object" } }), /inspect_image has no object parameter schema/],
-		["a nested schema with an unknown type", imageCopy(["generate_image", "edit_image", "inspect_image"], { generate_image: { type: "object", properties: { prompt: { type: "not-a-json-schema-type" } } } }), /properties\.prompt has type "not-a-json-schema-type"/],
+		["an invalid schema inside a combinator", imageCopy(["generate_image", "edit_image", "inspect_image"], { generate_image: { type: "object", properties: { prompt: { anyOf: [{ type: "not-a-json-schema-type" }] } } } }), /generate_image\/properties\/prompt\/anyOf\/0\/type is not valid JSON Schema/],
 		["an unknown extra tool, such as one named like a coding tool", imageCopy(["generate_image", "edit_image", "inspect_image", "read"]), /does not know: read/],
 	];
 	for (const [name, images, reason] of cases) {

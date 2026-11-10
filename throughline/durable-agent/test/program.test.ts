@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai";
 import { type ConversationId, createRegistry, type EntryId, Harness } from "@earendil-works/pi-durable";
@@ -161,4 +161,40 @@ test("the transcript names the live conversation: a binding line at start, on fo
 	assert.equal(lastBinding(lines), before.conversationId, "the restart names the stored binding, not the newest conversation");
 	await second.call("drain");
 	await second.exited;
+});
+
+test("the transcript is rebuilt from the store at start: a lost newline, a cut tail or a moved line never drops or reorders a stored entry", async () => {
+	const { store, cwd } = await fresh();
+	const first = start(store, cwd);
+	await first.hello;
+	for (const [index, content] of ["one", "two"].entries()) {
+		const { submissionId } = (await first.call("submit", { content, requestId: `n${index}` })) as { submissionId: number };
+		await first.call("wait", { submissionId });
+	}
+	await first.call("drain");
+	await first.exited;
+	const file = join(store, "transcript.jsonl");
+	const entryIds = (text: string) =>
+		text.split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line) as Line).flatMap((line) => (line.entry ? [line.entry.id] : []));
+	const clean = await readFile(file, "utf8");
+	const stored = entryIds(clean);
+	const lines = clean.trimEnd().split("\n");
+	const userLine = lines.find((line) => (JSON.parse(line) as Line).entry?.kind === "pi.user") as string;
+	// The three byte states the reviewers built (Rereview3-1, 3-2, 3-3), each followed by a restart on the same store.
+	const damage: [string, string][] = [
+		["a complete last record whose newline was not written", clean.trimEnd()],
+		["the file cut right after a complete user entry, no newline", `${lines.slice(0, lines.indexOf(userLine) + 1).join("\n")}`],
+		["a user entry moved to the end without its newline", `${lines.filter((line) => line !== userLine).join("\n")}\n${userLine}`],
+	];
+	for (const [label, bytes] of damage) {
+		await writeFile(file, bytes);
+		const again = start(store, cwd);
+		await again.hello;
+		await again.call("drain");
+		await again.exited;
+		const text = await readFile(file, "utf8");
+		assert.ok(text.endsWith("\n"), label);
+		assert.deepEqual(entryIds(text), stored, `${label}: every stored entry once, in commit order`);
+		assert.ok(text.split("\n").filter((line) => line.trim()).every((line) => JSON.parse(line)), label);
+	}
 });
