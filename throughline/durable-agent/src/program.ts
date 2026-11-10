@@ -22,7 +22,9 @@ import {
 	type TaskId,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { Binding } from "./binding.ts";
 import { carrySession } from "./carry.ts";
+import { clearSnapshots } from "./conversation-snapshot.ts";
 import { lockStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
 import { reapLeftovers, startReaper } from "./reaper.ts";
 import {
@@ -51,8 +53,6 @@ export const DURABLE_VERSION: string = (() => {
 	return "unknown";
 })();
 
-/** Which conversation the agent's thread shows now: the root, or the newest fork after a rewind. */
-type StoredBinding = { agentId: string | null; conversationId: number | null };
 /** Tools the user accepted for the session in ThroughLine, so a restart keeps them. */
 const SessionApprovals = defineDoc<{ tools: string[] }>({
 	kind: "throughline.session-approvals",
@@ -62,13 +62,6 @@ const SessionApprovals = defineDoc<{ tools: string[] }>({
 	initial: () => ({ tools: [] }),
 });
 
-const Binding = defineDoc<StoredBinding>({
-	kind: "throughline.agent-binding",
-	version: 1,
-	scope: "session",
-	checkpointWhen: () => true,
-	initial: () => ({ agentId: null, conversationId: null }),
-});
 
 export type ProgramOptions = {
 	/** Folder holding the store and its lock. */
@@ -167,6 +160,8 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				stored.agentId = options.agentId;
 				stored.conversationId = id;
 			}, context);
+			// After the commit: a snapshot of the branch the thread showed before must not outlive the rebind.
+			clearSnapshots(options.storeDir);
 		}
 		if (options.carryFrom !== undefined) {
 			const summary = await carrySession(opened, conversation, options.carryFrom, options.storeDir, context);

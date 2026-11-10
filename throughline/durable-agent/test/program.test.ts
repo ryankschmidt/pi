@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai";
@@ -251,4 +251,42 @@ test("snapshots are private under umask 022: the file 0600, its folder 0700 even
 	} finally {
 		process.umask(previous);
 	}
+});
+
+test("a rewind removes earlier snapshots, and a snapshot running across the rewind is refused: no file ever keeps withdrawn text (Rereview5-1)", { timeout: 120_000 }, async () => {
+	const { store, cwd } = await fresh();
+	const program = startSnapshot(store, cwd, 1);
+	await program.hello;
+	await turn(program, "Retained choice.", "r1");
+	await turn(program, "Withdrawn choice.", "r2");
+	for (let index = 0; index < 60; index++) await turn(program, `Padding ${index}.`, `p${index}`);
+	await turn(program, "snapshot first", "s1");
+	const earlier = snapshotPath(await storedEntries(program));
+	assert.ok(JSON.stringify(await snapshotEntries(earlier)).includes("Withdrawn choice."));
+	const withdrawn = (await storedEntries(program)).find((entry) => userText(entry) === "Withdrawn choice.");
+	assert.ok(withdrawn);
+
+	// Sequential: the earlier snapshot was written before the rewind; after it, the path names nothing.
+	const before = (await program.call("submit", { content: "snapshot during the rewind", requestId: "s2" })) as { submissionId: number };
+	const folder = join(store, "snapshots");
+	const deadline = Date.now() + 30_000;
+	let overlapped = false;
+	while (!overlapped && Date.now() < deadline) {
+		try {
+			overlapped = readdirSync(folder).some((name) => name.startsWith(".tmp-"));
+		} catch {}
+	}
+	await program.call("forkBefore", { entryId: withdrawn.id });
+	assert.ok(overlapped, "the rewind landed while a snapshot was being written");
+	await program.call("wait", { submissionId: before.submissionId });
+	assert.ok(!existsSync(earlier), "the snapshot written before the rewind is gone");
+	for (const name of await readdir(folder)) {
+		assert.ok(!(await readFile(join(folder, name), "utf8")).includes("Withdrawn choice."), `${name} holds no withdrawn text`);
+	}
+
+	await turn(program, "snapshot after the rewind", "s3");
+	const after = await snapshotEntries(snapshotPath(await storedEntries(program)));
+	assert.deepEqual(after.filter((entry) => entry.kind === "pi.user").map(userText), ["Retained choice.", "snapshot after the rewind"]);
+	await program.call("drain");
+	await program.exited;
 });

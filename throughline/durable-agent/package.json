@@ -8,7 +8,6 @@
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.5.0",
     "@earendil-works/pi-schema": "1.5.0",
-    "ajv": "8.20.0",
     "undici": "8.12.3"
   },
   "scripts": {

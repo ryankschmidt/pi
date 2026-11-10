@@ -36,9 +36,7 @@ import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { loadSkills } from "@earendil-works/pi-coding-agent";
-import type { ToolRegistration } from "@earendil-works/pi-durable";
-import { Ajv2020 } from "ajv/dist/2020.js";
+import { loadSkills, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { imageModuleTools } from "../src/image-tools.ts";
 
 export const PIN_SCHEMA = "throughline.pi-durable-agent-pin.v1";
@@ -56,7 +54,12 @@ const DURABLE_CLIENT_MARKERS = ["Pi Durable agent program exited", "routePiAdapt
 export const SHIPPED_IMAGE_MODULE = join(HOME, "core-root/src/tools/subscription-images");
 const CAPABILITIES = "throughline/durable-agent/capabilities";
 const IMAGE_COPY = `${CAPABILITIES}/subscription-images`;
-const IMAGE_FILES = ["shared.mjs", "effects.mjs"];
+const IMAGE_FILES = ["shared.mjs", "effects.mjs", "image-tools.manifest.json"];
+/** Written by subscription-images' build after its schema check (Ajv 2020, strict): the tools and each file's hash. */
+const IMAGE_MANIFEST = "image-tools.manifest.json";
+const IMAGE_MANIFEST_SCHEMA = "subscription-images.image-tools-manifest.v1";
+/** The show-me frontmatter field that says its Pi Durable transcript comes from conversation_snapshot. */
+const SHOW_ME_TRANSCRIPT_FIELD = "pi-durable-transcript";
 /**
  * The shipped show-me skill (Ship Warden's Tier 2 copy of show-me.md); each install pins it as a skill the program
  * loads, so `/show-me` and `/skill:show-me` are listed as commands in every Durable thread without an edit to pi's settings.
@@ -134,26 +137,36 @@ function skillProblem(file: string, name: string): string | undefined {
 	const skill = skills.find((candidate) => candidate.name === name);
 	if (skill === undefined) return `pi's skill loader finds no skill named ${name} in ${file}`;
 	if (!skill.disableModelInvocation) return `${file} is not marked disable-model-invocation, so /${name} would not be listed as a command`;
+	// This program writes no transcript file; a show-me that reads one would find nothing, or stale words, in every
+	// Durable thread. The skill declares where its transcript comes from, and only conversation_snapshot is accepted.
+	const { frontmatter } = parseFrontmatter<Record<string, unknown>>(readFileSync(file, "utf8"));
+	if (frontmatter[SHOW_ME_TRANSCRIPT_FIELD] !== "conversation_snapshot") {
+		return `${file} does not declare ${SHOW_ME_TRANSCRIPT_FIELD}: conversation_snapshot, so it would read a transcript file this agent no longer writes (show-me 2.0.7 and older)`;
+	}
 	return undefined;
 }
 
 /**
- * Undefined when every image tool schema is a valid draft 2020-12 JSON Schema that Ajv compiles strictly (each
- * `required` name defined in its `properties`); otherwise the first tool and place that is not. Providers check tool
- * schemas on every request, so one malformed schema would break every request of every new thread.
+ * Undefined when the copied image module carries the manifest subscription-images' build wrote after its schema check,
+ * its hashes match the copied files and its tools are the ones the copy provides; otherwise why not. The schemas are
+ * validated where they are built, so this installer needs no validator of its own.
  */
-function imageSchemaProblem(tools: readonly ToolRegistration[]): string | undefined {
-	const ajv = new Ajv2020({ strictSchema: true, strictRequired: true, strictTypes: false, logger: false });
-	for (const tool of tools) {
-		if (!ajv.validateSchema(tool.parameters)) {
-			const first = ajv.errors?.find((error) => error.keyword !== "anyOf") ?? ajv.errors?.[0];
-			return `${tool.name}${first?.instancePath ?? ""} is not valid JSON Schema (${first?.message ?? "rejected by the meta-schema"})`;
-		}
-		try {
-			ajv.compile(tool.parameters);
-		} catch (error) {
-			return `${tool.name} is not a usable JSON Schema (${error instanceof Error ? error.message : String(error)})`;
-		}
+function imageManifestProblem(dir: string, tools: readonly string[]): string | undefined {
+	let manifest: { schema?: unknown; tools?: unknown; files?: Record<string, unknown> };
+	try {
+		manifest = JSON.parse(readFileSync(join(dir, IMAGE_MANIFEST), "utf8"));
+	} catch {
+		manifest = {};
+	}
+	if (manifest.schema !== IMAGE_MANIFEST_SCHEMA || !Array.isArray(manifest.tools) || typeof manifest.files !== "object" || manifest.files === null) {
+		return `${IMAGE_MANIFEST} is not a subscription-images manifest (${IMAGE_MANIFEST_SCHEMA}), so nothing records that the schemas passed the build's check`;
+	}
+	for (const name of IMAGE_FILES.filter((file) => file !== IMAGE_MANIFEST)) {
+		const sha = createHash("sha256").update(readFileSync(join(dir, name))).digest("hex");
+		if (manifest.files[name] !== sha) return `${name} does not match the hash its build's schema check recorded in ${IMAGE_MANIFEST}`;
+	}
+	if ([...manifest.tools].sort().join(",") !== [...tools].sort().join(",")) {
+		return `${IMAGE_MANIFEST} names tools ${manifest.tools.join(", ")}, not the copy's ${tools.join(", ")}`;
 	}
 	return undefined;
 }
@@ -209,10 +222,10 @@ export async function install(
 	mkdirSync(dirname(join(target, SHOW_ME_COPY)), { recursive: true });
 	execFileSync("cp", [showMe, join(target, SHOW_ME_COPY)]);
 	// The same loader and checks the agent runs at start, on the bytes this install will run: the copied files, not their
-	// source (a source that loads only beside files the install does not copy is refused here). Then the full JSON
-	// Schema check, which only the installer runs: the agent loads nothing but this read-only copy.
+	// source (a source that loads only beside files the install does not copy is refused here). Then the manifest: the
+	// copied bytes must be the ones subscription-images' build validated.
 	const checked = await imageModuleTools(join(target, IMAGE_COPY));
-	const imageProblem = typeof checked === "string" ? checked : imageSchemaProblem(checked);
+	const imageProblem = typeof checked === "string" ? checked : imageManifestProblem(join(target, IMAGE_COPY), checked.map((tool) => tool.name));
 	if (imageProblem !== undefined) {
 		throw new Error(
 			`refused: ${imageProblem}; the new copy is left unused at ${target}; current is unchanged.\n` +

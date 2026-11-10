@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { check, install, readPin, rollback, SHIPPED_IMAGE_MODULE } from "../install/runtime.ts";
+import { check, install, readPin, rollback } from "../install/runtime.ts";
 
 /** A tiny stand-in for the Pi fork: one workspace package with dist, a node_modules link to it, the agent entry. */
 function fakeFork(): string {
@@ -40,13 +41,29 @@ function fakeImageModule(tools: string[] = IMAGE_TOOLS, schemas: Record<string, 
 		`export const imageToolDescriptions = ${JSON.stringify(descriptions)};\nexport const imageToolParameters = ${JSON.stringify(parameters)};\n`,
 	);
 	writeFileSync(join(dir, "effects.mjs"), "export const runImageTool = () => undefined;\n");
+	writeManifest(dir, tools);
 	return dir;
+}
+
+/** The manifest subscription-images' build writes after its schema check: the tools and each shipped file's hash. */
+function writeManifest(dir: string, tools: string[] = IMAGE_TOOLS): void {
+	const sha = (name: string) => createHash("sha256").update(readFileSync(join(dir, name))).digest("hex");
+	writeFileSync(
+		join(dir, "image-tools.manifest.json"),
+		JSON.stringify({
+			schema: "subscription-images.image-tools-manifest.v1",
+			version: "0.2.6",
+			validator: { name: "ajv", version: "8.20.0", dialect: "2020-12", strictSchema: true, strictRequired: true },
+			tools,
+			files: { "shared.mjs": sha("shared.mjs"), "effects.mjs": sha("effects.mjs") },
+		}),
+	);
 }
 
 /** A stand-in for the shipped show-me.md: a command-only skill named show-me. */
 function fakeShowMe(body = "Show it."): string {
 	const file = join(mkdtempSync(join(tmpdir(), "pi-show-me-")), "show-me.md");
-	writeFileSync(file, `---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\n---\n${body}\n`);
+	writeFileSync(file, `---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\npi-durable-transcript: conversation_snapshot\n---\n${body}\n`);
 	return file;
 }
 
@@ -87,12 +104,13 @@ test("the image module is pinned inside the install: missing or incompatible ref
 	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-"));
 	const showMe = fakeShowMe();
 	const missing = mkdtempSync(join(tmpdir(), "pi-images-missing-"));
-	await assert.rejects(install(fork, runtime, null, { imageModule: missing, showMe }), /lacks shared\.mjs, effects\.mjs; current is unchanged/);
+	await assert.rejects(install(fork, runtime, null, { imageModule: missing, showMe }), /lacks shared\.mjs, effects\.mjs, image-tools\.manifest\.json; current is unchanged/);
 	assert.equal(existsSync(join(runtime, "current")), false);
 	// Both files present and loadable, exporting the wrong names: refused before current moves.
 	const wrong = mkdtempSync(join(tmpdir(), "pi-images-wrong-"));
 	writeFileSync(join(wrong, "shared.mjs"), "export const unrelated = 1;\n");
 	writeFileSync(join(wrong, "effects.mjs"), "export const alsoUnrelated = 2;\n");
+	writeManifest(wrong);
 	await assert.rejects(install(fork, runtime, null, { imageModule: wrong, showMe }), /imageToolDescriptions is not an object\); the new copy is left unused at .*; current is unchanged/);
 	assert.equal(existsSync(join(runtime, "current")), false);
 
@@ -109,35 +127,25 @@ test("the image module is pinned inside the install: missing or incompatible ref
 		assert.equal(readPin(runtime)?.id, pin.id, `current is unchanged after a copy without ${lacking}`);
 	}
 	await assert.rejects(install(fork, runtime, null, { imageModule: fakeImageModule([...IMAGE_TOOLS, "erase_image"]), showMe }), /does not know: erase_image/);
-	// Nested schemas are checked whole: an unknown type and a string `required` compile in pi's schema compiler, a
-	// property given as a number does not; all three are refused before current moves.
+	// Schemas are validated by subscription-images' build (Ajv, strict), which then writes the manifest; the installer
+	// still runs pi's compiler through the shared loader, which refuses a property given as a number.
 	const nested: [unknown, RegExp][] = [
-		[{ type: "object", properties: { prompt: { type: "not-a-json-schema-type" } } }, /generate_image\/properties\/prompt\/type is not valid JSON Schema/],
-		[{ type: "object", properties: { prompt: { type: "string" } }, required: "prompt" }, /generate_image\/required is not valid JSON Schema/],
 		[{ type: "object", properties: { prompt: 5 } }, /A schema must be an object or a boolean, got 5\); the new copy is left unused/],
-		// The rereview 3 cases (all three reviewers): inside a combinator, an empty type list, a keyword of the wrong type,
-		// and a bad schema under $defs.
-		[{ type: "object", properties: { prompt: { anyOf: [{ type: "not-a-json-schema-type" }, { type: "string" }] } } }, /generate_image\/properties\/prompt\/anyOf\/0\/type is not valid JSON Schema/],
-		[{ type: "object", properties: { prompt: { type: [] } } }, /generate_image\/properties\/prompt\/type is not valid JSON Schema/],
-		[{ type: "object", properties: { prompt: { type: "string", minLength: "bad" } } }, /generate_image\/properties\/prompt\/minLength is not valid JSON Schema/],
-		[{ type: "object", properties: {}, $defs: { size: { type: "nope" } } }, /generate_image\/\$defs\/size\/type is not valid JSON Schema/],
-		// Rereview4-1 #3: a required name with no property is legal JSON Schema but breaks the contract, at any depth.
-		[{ type: "object", properties: { prompt: { type: "string" } }, required: ["ghost"] }, /generate_image is not a usable JSON Schema \(strict mode: required property "ghost" is not defined/],
-		[{ type: "object", properties: { size: { type: "object", properties: {}, required: ["width"] } } }, /generate_image is not a usable JSON Schema \(strict mode: required property "width" is not defined/],
 	];
 	for (const [schema, reason] of nested) {
 		await assert.rejects(install(fork, runtime, null, { imageModule: fakeImageModule(IMAGE_TOOLS, { generate_image: schema }), showMe }), reason);
 		assert.equal(readPin(runtime)?.id, pin.id);
 	}
-	// A nested schema whose required names are its properties installs; so does the shipped module.
-	const valid = { type: "object", properties: { size: { type: "object", properties: { width: { type: "integer" } }, required: ["width"] } }, required: ["size"] };
-	execFileSync("git", ["-C", fork, "checkout", "--", "."]);
-	assert.notEqual((await install(fork, runtime, null, { imageModule: fakeImageModule(IMAGE_TOOLS, { generate_image: valid }), showMe })).id, pin.id);
-	const pinnedShipped = fileURLToPath(new URL("../capabilities/subscription-images", import.meta.url));
-	const shipped = existsSync(pinnedShipped) ? pinnedShipped : SHIPPED_IMAGE_MODULE;
-	if (existsSync(join(shipped, "shared.mjs"))) await install(fork, runtime, null, { imageModule: shipped, showMe });
-	rollback(runtime);
-	if (existsSync(join(shipped, "shared.mjs"))) rollback(runtime);
+	// Rereview5-2 #2: the installer carries no validator; it copies only files whose hashes the build's manifest names.
+	const unvalidated = fakeImageModule();
+	writeFileSync(join(unvalidated, "image-tools.manifest.json"), "");
+	await assert.rejects(install(fork, runtime, null, { imageModule: unvalidated, showMe }), /image-tools\.manifest\.json is not a subscription-images manifest[\s\S]*current is unchanged/);
+	const edited = fakeImageModule();
+	writeFileSync(join(edited, "effects.mjs"), "export const runImageTool = () => 'edited after the build';\n");
+	await assert.rejects(install(fork, runtime, null, { imageModule: edited, showMe }), /effects\.mjs does not match the hash its build's schema check recorded[\s\S]*current is unchanged/);
+	const renamed = fakeImageModule();
+	writeManifest(renamed, ["generate_image", "edit_image", "erase_image"]);
+	await assert.rejects(install(fork, runtime, null, { imageModule: renamed, showMe }), /names tools generate_image, edit_image, erase_image, not the copy's/);
 	assert.equal(readPin(runtime)?.id, pin.id);
 	// The check runs on the copied files: this source loads only beside a file the install does not copy.
 	const leaning = fakeImageModule();
@@ -149,6 +157,19 @@ test("the image module is pinned inside the install: missing or incompatible ref
 	writeFileSync(join(imageModule, "effects.mjs"), "export const runImageTool = () => 'newer';\n");
 	assert.ok(check(runtime, imageModule, showMe).problems.includes("image module pinned older than shipped; the next agent install picks it up"));
 	assert.ok(!check(runtime, imageModule, showMe).problems.some((p) => p.includes("changed after install")), "the pin itself is unchanged");
+});
+
+test("a show-me that does not read the transcript through conversation_snapshot is refused before it is pinned (Rereview5-2 #3, 5-3)", async () => {
+	const fork = fakeFork();
+	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-"));
+	const imageModule = fakeImageModule();
+	// show-me 2.0.7's shape: a command skill whose transcript step reads the transcript.jsonl path the prompt used to name.
+	const older = fakeShowMe("Pi Durable: the transcript.jsonl path your system prompt names under transcript.");
+	writeFileSync(older, readFileSync(older, "utf8").replace("pi-durable-transcript: conversation_snapshot\n", ""));
+	await assert.rejects(install(fork, runtime, null, { imageModule, showMe: older }), /does not declare pi-durable-transcript: conversation_snapshot[\s\S]*current is unchanged/);
+	assert.equal(existsSync(join(runtime, "current")), false);
+	const pin = await install(fork, runtime, null, { imageModule, showMe: fakeShowMe() });
+	assert.match(readFileSync(join(runtime, "versions", pin.id, "throughline/durable-agent/capabilities/skills/show-me/SKILL.md"), "utf8"), /pi-durable-transcript: conversation_snapshot/);
 });
 
 test("the show-me skill is pinned inside the install: missing or model-callable refuses, a newer ship is reported", async () => {
@@ -169,7 +190,7 @@ test("the show-me skill is pinned inside the install: missing or model-callable 
 	const copy = join(runtime, "versions", pin.id, "throughline/durable-agent/capabilities/skills/show-me/SKILL.md");
 	assert.equal(statSync(copy).mode & 0o222, 0, "the pinned skill is read-only");
 	assert.ok(!check(runtime, imageModule, showMe).problems.some((p) => p.includes("show-me")));
-	writeFileSync(showMe, "---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\n---\nShow it better.\n");
+	writeFileSync(showMe, "---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\npi-durable-transcript: conversation_snapshot\n---\nShow it better.\n");
 	assert.ok(check(runtime, imageModule, showMe).problems.includes("show-me skill pinned older than shipped; the next agent install picks it up"));
 });
 
