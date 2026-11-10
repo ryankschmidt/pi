@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readdirSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai";
 import { type ConversationId, createRegistry, type EntryId, Harness } from "@earendil-works/pi-durable";
@@ -59,12 +59,14 @@ async function turn(program: AgentProgram, content: string, requestId: string): 
 }
 /** The path the newest conversation_snapshot call returned, read from its stored tool result. */
 const snapshotPath = (entries: Stored[]) => {
-	const found = [...JSON.stringify(entries).matchAll(/(\/[^"\\]*\/snapshots\/\d+-\d+\.jsonl)/g)].at(-1)?.[1];
+	// The tool returns the path as its first text block; later blocks may carry diagnostics.
+	const results = entries.flatMap((entry) => entry.model ?? []).filter((m) => (m as { toolName?: string }).toolName === "conversation_snapshot");
+	const found = ((results.at(-1)?.content as { text?: string }[] | undefined)?.[0]?.text);
 	assert.ok(found, "a conversation_snapshot result names a file");
 	return found;
 };
 const snapshotEntries = async (path: string): Promise<Stored[]> =>
-	(await readFile(path, "utf8")).split("\n").filter((line) => line.trim()).map((line) => (JSON.parse(line) as { entry: Stored }).entry);
+	(await readFile(path, "utf8")).split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line) as { entry?: Stored }).flatMap((line) => (line.entry ? [line.entry] : []));
 
 const start = (store: string, cwd: string, protocol?: number) => {
 	const program = startProgram(process.execPath, [fixture, store, cwd], protocol === undefined ? {} : { protocol });
@@ -383,5 +385,52 @@ test("a real kill at 0, 10 and 40 ms after sending fork or forkBefore never leav
 			await second.call("drain");
 			await second.exited;
 		}
+	}
+});
+
+test("a snapshot starts with its format line, naming the conversation and the last entry it holds (Rereview7-3 #1)", async () => {
+	const { store, cwd } = await fresh();
+	const program = startSnapshot(store, cwd);
+	await program.hello;
+	await turn(program, "One.", "f1");
+	await turn(program, "snapshot", "f2");
+	const path = snapshotPath(await storedEntries(program));
+	const [first, ...rest] = (await readFile(path, "utf8")).split("\n").filter((line) => line.trim());
+	const written = rest.map((line) => (JSON.parse(line) as { entry: Stored }).entry);
+	assert.deepEqual(JSON.parse(first as string), {
+		format: "pi-durable-conversation-snapshot.v1",
+		conversationId: written[0]?.conversationId,
+		lastEntryId: written.at(-1)?.id,
+	});
+	await program.call("drain");
+	await program.exited;
+});
+
+test("a snapshot cleanup failure never stops the agent and is never silent: logged at start, reported in the stored tool result on a call (Rereview7-1 #3, 7-2 #2)", async () => {
+	const { store, cwd } = await fresh();
+	const folder = join(store, "snapshots");
+	// An entry cleanup cannot remove: a folder where a snapshot file would be.
+	await mkdir(join(folder, "9-9.jsonl"), { recursive: true });
+	const first = startSnapshot(store, cwd);
+	await first.hello;
+	assert.match(first.stderr(), /snapshot cleanup failed[^\n]*9-9\.jsonl/, "start-up cleanup failure is logged");
+	await turn(first, "snapshot", "c1");
+	const entries = await storedEntries(first);
+	assert.ok(existsSync(snapshotPath(entries)), "the snapshot is still written");
+	assert.match(JSON.stringify(entries), /snapshot cleanup failed[^"]*9-9\.jsonl/, "the call's stored result reports the cleanup failure");
+	await first.call("drain");
+	await first.exited;
+
+	// An unreadable folder at start: logged, and the agent still answers.
+	await chmod(folder, 0o000);
+	try {
+		const second = startSnapshot(store, cwd);
+		await second.hello;
+		assert.match(second.stderr(), /snapshot cleanup failed/);
+		await turn(second, "still answering", "c2");
+		await second.call("drain");
+		await second.exited;
+	} finally {
+		await chmod(folder, 0o700);
 	}
 });

@@ -12,6 +12,8 @@ import type { Context } from "@earendil-works/chord";
 import { defineExtension, defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@earendil-works/pi-durable";
 
 export const SNAPSHOT_TOOL = "conversation_snapshot";
+/** The first line of every snapshot; show-me refuses a Durable file without it (an older transcript.jsonl holds every branch). */
+export const SNAPSHOT_FORMAT = "pi-durable-conversation-snapshot.v1";
 
 /** The extension carrying the tool; snapshots go in `storeDir/snapshots/`, read `pageSize` entries at a time. */
 export function createConversationSnapshotExtension(storeDir: string, pageSize = 500) {
@@ -27,7 +29,12 @@ export function createConversationSnapshotExtension(storeDir: string, pageSize =
 				// A rerun after a restart writes a fresh snapshot from the committed store.
 				replay: "safe",
 				execute: async (_input: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> => {
-					const path = await writeSnapshot(folder, pageSize, api, context);
+					const { path, cleanupFailures } = await writeSnapshot(folder, pageSize, api, context);
+					// Cleanup is not correctness, but a failure must be seen: it is stored with this call's result in the thread.
+					for (const failure of cleanupFailures) {
+						process.stderr.write(`${failure}\n`);
+						api.diagnostic({ severity: "warn", code: "snapshot-cleanup-failed", message: failure });
+					}
 					return { output: [{ type: "text", text: path }] };
 				},
 			}),
@@ -35,17 +42,35 @@ export function createConversationSnapshotExtension(storeDir: string, pageSize =
 	});
 }
 
-/** Remove every snapshot and temporary file; the program calls this at start, before it serves anything (cleanup). */
-export function clearSnapshots(storeDir: string): void {
-	const folder = snapshotFolder(storeDir);
+/**
+ * Remove every snapshot and temporary file (the program calls this at start; cleanup, not correctness). Returns one line
+ * per failure; only an absent folder counts as nothing to remove.
+ */
+export function clearSnapshots(storeDir: string): string[] {
+	return removeSnapshots(snapshotFolder(storeDir), () => false);
+}
+
+function removeSnapshots(folder: string, keep: (name: string) => boolean): string[] {
 	let names: string[];
 	try {
 		names = readdirSync(folder);
-	} catch {
-		return;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		return [`snapshot cleanup failed: could not list ${folder} (${message(error)}); old snapshots there may remain`];
 	}
-	for (const name of names) rmSync(join(folder, name), { force: true });
+	const failures: string[] = [];
+	for (const name of names) {
+		if (keep(name)) continue;
+		try {
+			rmSync(join(folder, name), { force: true });
+		} catch (error) {
+			failures.push(`snapshot cleanup failed: could not remove ${join(folder, name)} (${message(error)})`);
+		}
+	}
+	return failures;
 }
+
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** Write all of `bytes`, continuing after short writes; a write that makes no progress throws. */
 export function writeAll(
@@ -62,13 +87,14 @@ export function writeAll(
 }
 
 const snapshotFolder = (storeDir: string) => join(storeDir, "snapshots");
+const HEADER_WIDTH = 160;
 
 async function writeSnapshot(
 	folder: string,
 	pageSize: number,
 	api: ToolExecutionApi,
 	context: Context,
-): Promise<string> {
+): Promise<{ path: string; cleanupFailures: string[] }> {
 	mkdirSync(folder, { recursive: true, mode: 0o700 });
 	chmodSync(folder, 0o700);
 	const temporary = join(folder, `.tmp-${process.pid}-${api.callId.replace(/[^\w-]/g, "_")}`);
@@ -79,6 +105,10 @@ async function writeSnapshot(
 		const last = await api.commit(async (tx) => {
 			const fd = openSync(temporary, "w", 0o600);
 			try {
+				// The format line is written first at a fixed width and filled in once the last entry is known.
+				const header = (lastEntryId: number) =>
+					Buffer.from(`${JSON.stringify({ format: SNAPSHOT_FORMAT, conversationId: Number(api.conversationId), lastEntryId }).padEnd(HEADER_WIDTH - 1)}\n`);
+				writeAll(fd, header(0));
 				let lastId = 0;
 				let cursor: Parameters<typeof tx.scanEntries>[2];
 				do {
@@ -89,6 +119,7 @@ async function writeSnapshot(
 					}
 					cursor = page.next;
 				} while (cursor !== undefined);
+				writeAll(fd, header(lastId), (handle, bytes, offset, length) => writeSync(handle, bytes, offset, length, offset));
 				return lastId;
 			} finally {
 				closeSync(fd);
@@ -101,10 +132,6 @@ async function writeSnapshot(
 	}
 	// One snapshot on disk: an earlier path now fails visibly instead of being read stale. Another live call's
 	// temporary file (same pid) is left alone; a killed program's are removed.
-	for (const name of readdirSync(folder)) {
-		const full = join(folder, name);
-		if (full === path || name.startsWith(`.tmp-${process.pid}-`)) continue;
-		rmSync(full, { force: true });
-	}
-	return path;
+	const cleanupFailures = removeSnapshots(folder, (name) => join(folder, name) === path || name.startsWith(`.tmp-${process.pid}-`));
+	return { path, cleanupFailures };
 }

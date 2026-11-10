@@ -108,7 +108,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 
 	// Snapshots are point-in-time files, reachable only from the conversation that holds their tool result; old ones
 	// are removed before anything is served (cleanup: a crash mid-rewind leaves no file behind past this start).
-	clearSnapshots(options.storeDir);
+	for (const failure of clearSnapshots(options.storeDir)) log(failure);
 	if (options.reap) {
 		const killed = reapLeftovers(options.storeDir);
 		if (killed > 0) log(`stopped ${killed} command group(s) left by an earlier program`);

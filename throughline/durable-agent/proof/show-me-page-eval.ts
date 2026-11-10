@@ -1,15 +1,14 @@
 // Real-model eval of a whole /show-me run (Rereview3-2 #3, Rereview4-2 #2): past the first answer, until the model
 // publishes a page or gives up. The real agent program with Ryan's Pi agent folder and the pinned show-me, real models
-// through the tower broker, a fresh store per run. ThroughLine's html_render_file and html_render are supplied and
-// recorded here (html_render_file refuses bytes whose SHA-256 differs, as ThroughLine's does); every other tool is the
-// agent's own. The thread first states a decision in plain words, then Ryan types the command. One extra run per model
+// through the tower broker, a fresh store per run. ThroughLine's html_render is supplied and recorded here, answering
+// with its success shape (htmlRender.attachmentId); every other tool is the agent's own. The thread first states a decision in plain words, then Ryan types the command. One extra run per model
 // is a rewound thread: the withdrawn turn holds the most on-topic sentence, and the page must never quote it.
 //   node proof/show-me-page-eval.ts --out <results.json> [--runs 10] [--models a,b] [--parallel 4]
 // A run passes only when: conversation_snapshot ran before build and build's --transcript is the path it returned;
-// build and check each have a stored, successful result; the bytes published through html_render_file hash to the
-// passing check's publish sha256; and no plain html_render call was made. A missing result is a failure.
+// build and check each have a stored, successful result; and the last page sent to html_render hashes to the sha256 of
+// the page the passing check approved. A missing result is a failure. (Binding publish to the check is TQ-974.)
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,15 +36,6 @@ const HTML_RENDER = {
 	description: "Show an HTML page inline in Ryan's ThroughLine thread.",
 	inputSchema: { type: "object", properties: { html: { type: "string" }, title: { type: "string" }, height: { type: "number" } }, required: ["html"] },
 };
-const HTML_RENDER_FILE = {
-	name: "html_render_file",
-	description: "Show a checked HTML page file inline in this thread if its bytes hash to sha256. Pass the publish fields of a passing show-me check.",
-	inputSchema: {
-		type: "object",
-		properties: { file: { type: "string" }, sha256: { type: "string" }, title: { type: "string" }, height: { type: "integer" } },
-		required: ["file", "sha256", "title", "height"],
-	},
-};
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const RUN_LIMIT_MS = 15 * 60_000;
 
@@ -64,7 +54,7 @@ function layout() {
 	while (!existsSync(join(up, "node_modules/@earendil-works/pi-durable"))) up = dirname(up);
 	symlinkSync(join(up, "node_modules"), join(root, "node_modules"));
 	mkdirSync(join(root, "work"));
-	writeFileSync(join(root, "tools.json"), JSON.stringify([HTML_RENDER_FILE, HTML_RENDER]));
+	writeFileSync(join(root, "tools.json"), JSON.stringify([HTML_RENDER]));
 	return { programDir, root, showMe: realpathSync(showMe) };
 }
 
@@ -82,7 +72,6 @@ async function run(model: string, index: number, rewound: boolean) {
 		{},
 	);
 	const renders: { html: string; title?: string }[] = [];
-	const fileRenders: { file: string; sha256: string; html: string | null; refused: boolean }[] = [];
 	let published: () => void = () => {};
 	const publishedOnce = new Promise<void>((resolve) => {
 		published = resolve;
@@ -91,26 +80,8 @@ async function run(model: string, index: number, rewound: boolean) {
 		const args = (call.arguments ?? {}) as { html?: string; title?: string };
 		if (call.name === "html_render") {
 			renders.push({ html: String(args.html ?? ""), ...(args.title ? { title: args.title } : {}) });
-			program.answerTool(call.id, { content: [{ type: "text", text: "The page is shown in the thread." }] });
+			program.answerTool(call.id, { content: [{ type: "text", text: JSON.stringify({ htmlRender: { attachmentId: `eval-${renders.length}`, title: args.title ?? "Page", height: 600 }, message: "Shown." }) }] });
 			published();
-		} else if (call.name === "html_render_file") {
-			const fileArgs = (call.arguments ?? {}) as { file?: string; sha256?: string };
-			let html: string | null = null;
-			try {
-				html = readFileSync(String(fileArgs.file), "utf8");
-			} catch {}
-			// As ThroughLine does: the bytes must hash to sha256 and a passing check record must name them.
-			let pass: { schema?: unknown; passed?: unknown; sha256?: unknown } = {};
-			try {
-				pass = JSON.parse(readFileSync(`${String(fileArgs.file)}.pass.json`, "utf8"));
-			} catch {}
-			const refused = html === null || sha256(html) !== fileArgs.sha256 || pass.schema !== "page-check-pass.v1" || pass.passed !== true || pass.sha256 !== fileArgs.sha256;
-			fileRenders.push({ file: String(fileArgs.file), sha256: String(fileArgs.sha256), html, refused });
-			if (refused) program.answerTool(call.id, { content: [{ type: "text", text: "Refused: the page file's bytes do not match sha256." }], isError: true });
-			else {
-				program.answerTool(call.id, { content: [{ type: "text", text: "Shown to the reader above your reply." }] });
-				published();
-			}
 		} else program.answerTool(call.id, { content: [{ type: "text", text: `${call.name} is not available in this run` }], isError: true });
 	});
 	const started = Date.now();
@@ -158,10 +129,10 @@ async function run(model: string, index: number, rewound: boolean) {
 	const snapshotBeforeBuild = snapshots.length > 0 && calls.indexOf(snapshots[0] as (typeof calls)[number]) < buildIndex;
 	const transcriptArg = /--transcript\s+("([^"]+)"|'([^']+)'|(\S+))/.exec(String(builds.at(-1)?.arguments?.command ?? ""));
 	const buildTranscript = transcriptArg?.[2] ?? transcriptArg?.[3] ?? transcriptArg?.[4];
-	const checkSha = /\\?"publish\\?":\s*\{[^}]*?\\?"sha256\\?":\s*\\?"([0-9a-f]{64})/.exec(textOf(checks.at(-1)))?.[1];
-	const shown = fileRenders.filter((render) => !render.refused);
-	const published_checked_bytes = checkSha !== undefined && shown.length > 0 && shown.every((render) => render.html !== null && sha256(render.html) === checkSha);
-	const page = shown.at(-1) ? { html: shown.at(-1)?.html ?? "" } : undefined;
+	// The check prints its page's sha256; the page sent to html_render must be those exact bytes.
+	const checkSha = /\\?"sha256\\?":\s*\\?"([0-9a-f]{64})/.exec(textOf(checks.at(-1)))?.[1];
+	const page = renders.at(-1);
+	const published_checked_bytes = checkSha !== undefined && page !== undefined && sha256(page.html) === checkSha;
 	// The page records its words line as base64 JSON {text, time, picked}: picked means not found among the user's turns.
 	const encoded = page ? /<meta name="show-me-words" content="([^"]*)"/.exec(page.html)?.[1] : undefined;
 	const words = encoded ? (JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as { text: string; picked: boolean }) : null;
@@ -179,11 +150,9 @@ async function run(model: string, index: number, rewound: boolean) {
 		snapshot_before_build: snapshotBeforeBuild,
 		build_transcript_is_snapshot: snapshotPath !== undefined && buildTranscript === snapshotPath,
 		html_render_calls: renders.length,
-		html_render_file_calls: fileRenders.length,
-		html_render_file_refused: fileRenders.filter((render) => render.refused).length,
 		published_checked_bytes,
 		passed:
-			snapshotBeforeBuild && snapshotPath !== undefined && buildTranscript === snapshotPath && succeeded(builds) && succeeded(checks) && published_checked_bytes && renders.length === 0,
+			snapshotBeforeBuild && snapshotPath !== undefined && buildTranscript === snapshotPath && succeeded(builds) && succeeded(checks) && published_checked_bytes,
 		words_from_user_turn: words !== null && words.picked === false && CONTEXT.includes(words.text),
 		words_never_withdrawn: words === null || !WITHDRAWN.includes(words.text),
 		page_words: words,
@@ -219,7 +188,7 @@ await Promise.all(
 			const result = await (jobs[next++] as () => ReturnType<typeof run>)();
 			results.push(result);
 			process.stdout.write(
-				`${result.passed ? "PASS" : "FAIL"} ${result.model} #${result.run}${result.rewound ? " rewound" : ""} snapshot=${result.snapshot_before_build}/${result.build_transcript_is_snapshot} build=${result.build_succeeded} check=${result.check_succeeded} checked-bytes=${result.published_checked_bytes} file-renders=${result.html_render_file_calls}(refused ${result.html_render_file_refused}) plain-renders=${result.html_render_calls} words-not-withdrawn=${result.words_never_withdrawn} ${result.seconds}s${result.error ? ` ${result.error}` : ""}\n`,
+				`${result.passed ? "PASS" : "FAIL"} ${result.model} #${result.run}${result.rewound ? " rewound" : ""} snapshot=${result.snapshot_before_build}/${result.build_transcript_is_snapshot} build=${result.build_succeeded} check=${result.check_succeeded} checked-bytes=${result.published_checked_bytes} renders=${result.html_render_calls} words-not-withdrawn=${result.words_never_withdrawn} ${result.seconds}s${result.error ? ` ${result.error}` : ""}\n`,
 			);
 		}
 	}),
@@ -231,7 +200,7 @@ const summary = Object.fromEntries(
 		{ passed: count(model, "passed"), read_skill_first: count(model, "read_skill_first"), snapshot_before_build: count(model, "snapshot_before_build"), build_transcript_is_snapshot: count(model, "build_transcript_is_snapshot"), build_succeeded: count(model, "build_succeeded"), check_succeeded: count(model, "check_succeeded"), published_checked_bytes: count(model, "published_checked_bytes"), words_never_withdrawn: count(model, "words_never_withdrawn") },
 	]),
 );
-writeFileSync(values.out as string, `${JSON.stringify({ schema: "durable-agent.show-me-page-eval.v2", ran_at: new Date().toISOString(), context: CONTEXT, command: COMMAND, summary, results }, null, 2)}\n`);
+writeFileSync(values.out as string, `${JSON.stringify({ schema: "durable-agent.show-me-page-eval.v3", ran_at: new Date().toISOString(), context: CONTEXT, command: COMMAND, summary, results }, null, 2)}\n`);
 console.log(JSON.stringify(summary, null, 1));
 // A killed agent's detached children can keep the event loop alive; the results are written, so end here.
 process.exit(0);
