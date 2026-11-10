@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Binding } from "../src/binding.ts";
 import { type AgentProgram, startProgram } from "../src/client.ts";
 import { ENGINE, PROTOCOL_VERSION } from "../src/protocol.ts";
 
@@ -253,7 +254,7 @@ test("snapshots are private under umask 022: the file 0600, its folder 0700 even
 	}
 });
 
-test("a rewind removes earlier snapshots, and a snapshot running across the rewind is refused: no file ever keeps withdrawn text (Rereview5-1)", { timeout: 120_000 }, async () => {
+test("a rewind during a snapshot: no snapshot reachable from the live branch holds withdrawn text, earlier or in flight (Rereview5-1)", { timeout: 120_000 }, async () => {
 	const { store, cwd } = await fresh();
 	const program = startSnapshot(store, cwd, 1);
 	await program.hello;
@@ -279,14 +280,108 @@ test("a rewind removes earlier snapshots, and a snapshot running across the rewi
 	await program.call("forkBefore", { entryId: withdrawn.id });
 	assert.ok(overlapped, "the rewind landed while a snapshot was being written");
 	await program.call("wait", { submissionId: before.submissionId });
-	assert.ok(!existsSync(earlier), "the snapshot written before the rewind is gone");
-	for (const name of await readdir(folder)) {
-		assert.ok(!(await readFile(join(folder, name), "utf8")).includes("Withdrawn choice."), `${name} holds no withdrawn text`);
-	}
+	// The run that started before the rewind may finish its file, but its path is stored only in the withdrawn branch.
+	const { paths } = await reachableSnapshots(program);
+	assert.ok(!paths.includes(earlier), "the snapshot written before the rewind is not reachable from the live branch");
+	await assertReachableAreLive(program, "Withdrawn choice.", "rewind during a snapshot");
 
 	await turn(program, "snapshot after the rewind", "s3");
 	const after = await snapshotEntries(snapshotPath(await storedEntries(program)));
 	assert.deepEqual(after.filter((entry) => entry.kind === "pi.user").map(userText), ["Retained choice.", "snapshot after the rewind"]);
 	await program.call("drain");
 	await program.exited;
+});
+
+/** Snapshot paths a reader of the live branch can reach: those named in the bound conversation's own entries. */
+async function reachableSnapshots(program: AgentProgram): Promise<{ live: Stored[]; paths: string[] }> {
+	const live = await storedEntries(program);
+	const paths = [...new Set([...JSON.stringify(live).matchAll(/(\/[^"\\]*\/snapshots\/[^"\\]+\.jsonl)/g)].map((m) => m[1] as string))];
+	return { live, paths };
+}
+/** Every reachable snapshot holds only entries of the live branch. */
+async function assertReachableAreLive(program: AgentProgram, withdrawn: string, label: string) {
+	const { live, paths } = await reachableSnapshots(program);
+	const liveIds = new Set(live.map((entry) => entry.id));
+	for (const path of paths) {
+		if (!existsSync(path)) continue;
+		const text = await readFile(path, "utf8");
+		// Withdrawn only when the rewind committed: a kill before its commit leaves the old branch live, sentence included.
+		if (!JSON.stringify(live).includes(withdrawn)) assert.ok(!text.includes(withdrawn), `${label}: ${path} is reachable from the live branch and holds withdrawn text`);
+		for (const entry of await snapshotEntries(path)) assert.ok(liveIds.has(entry.id), `${label}: ${path} holds entry ${entry.id} outside the live branch`);
+	}
+}
+
+// Rereview6-1, 6-2 and 6-3: a crash right after a rewind's or fork's binding commit, before anything else ran, left the
+// earlier snapshot readable after restart. The store is rebound here exactly as that commit leaves it, with no cleanup.
+for (const method of ["forkBefore", "fork"] as const) {
+	test(`a crash right after a ${method} binding commit: after restart no reachable snapshot holds withdrawn text and the stale file is gone`, { timeout: 60_000 }, async () => {
+		const { store, cwd } = await fresh();
+		const first = startSnapshot(store, cwd);
+		await first.hello;
+		await turn(first, "Retained choice.", "a");
+		await turn(first, "Withdraw this.", "b");
+		await turn(first, "snapshot please", "s1");
+		const entries = await storedEntries(first);
+		const stale = snapshotPath(entries);
+		assert.ok((await readFile(stale, "utf8")).includes("Withdraw this."));
+		const withdrawn = entries.find((entry) => userText(entry) === "Withdraw this.");
+		const retainedAnswer = entries.filter((entry) => entry.id < (withdrawn?.id ?? 0)).at(-1);
+		assert.ok(withdrawn && retainedAnswer);
+		await first.call("drain");
+		await first.exited;
+
+		// The rebind as committed, then nothing: what a SIGKILL after the binding commit leaves on disk.
+		const storage = await openNodeSqliteStorage(join(store, "store.sqlite"));
+		const registry = createRegistry();
+		registry.install(CodingTools);
+		const harness = await Harness.open(storage, { models: createModels(), registry, env: () => { throw new Error("no runs here"); } } as never, BACKGROUND_CONTEXT);
+		const root = await harness.conversation(withdrawn.conversationId as ConversationId, BACKGROUND_CONTEXT);
+		// forkBefore the withdrawn turn forks at the entry before it; fork at the retained answer is the same cut.
+		const next = await root?.fork(retainedAnswer.id as EntryId, { ownership: { kind: "ownerless" } }, BACKGROUND_CONTEXT);
+		assert.ok(next);
+		await harness.commit(async (tx) => {
+			const stored = await tx.doc(Binding);
+			stored.conversationId = Number(next.id);
+		}, BACKGROUND_CONTEXT);
+		await harness.close(BACKGROUND_CONTEXT);
+		assert.ok(existsSync(stale), `${method}: the stale snapshot is still on disk before restart`);
+
+		const second = startSnapshot(store, cwd);
+		const hello = await second.hello;
+		assert.equal(hello.conversationId, Number(next.id), "the restart shows the rebound conversation");
+		assert.ok(!existsSync(stale), `${method}: the stale snapshot is gone before the program answers`);
+		await assertReachableAreLive(second, "Withdraw this.", method);
+		await turn(second, "snapshot after restart", "s2");
+		await assertReachableAreLive(second, "Withdraw this.", method);
+		const fresh_ = await snapshotEntries(snapshotPath(await storedEntries(second)));
+		assert.deepEqual(fresh_.filter((entry) => entry.kind === "pi.user").map(userText), ["Retained choice.", "snapshot after restart"]);
+		await second.call("drain");
+		await second.exited;
+	});
+}
+
+test("a real kill at 0, 10 and 40 ms after sending fork or forkBefore never leaves a reachable snapshot with withdrawn text (Rereview5-1)", { timeout: 120_000 }, async () => {
+	for (const method of ["forkBefore", "fork"] as const) {
+		for (const delay of [0, 10, 40]) {
+			const { store, cwd } = await fresh();
+			const first = startSnapshot(store, cwd);
+			await first.hello;
+			await turn(first, "Retained choice.", "a");
+			await turn(first, "Withdraw this.", "b");
+			await turn(first, "snapshot please", "s1");
+			const entries = await storedEntries(first);
+			const withdrawn = entries.find((entry) => userText(entry) === "Withdraw this.");
+			const retainedAnswer = entries.filter((entry) => entry.id < (withdrawn?.id ?? 0)).at(-1);
+			assert.ok(withdrawn && retainedAnswer);
+			void first.call(method, { entryId: method === "fork" ? retainedAnswer.id : withdrawn.id }).catch(() => undefined);
+			await new Promise((resolve) => setTimeout(resolve, delay));
+			first.kill();
+			await first.exited;
+			const second = startSnapshot(store, cwd);
+			await second.hello;
+			await assertReachableAreLive(second, "Withdraw this.", `${method} ${delay} ms`);
+			await second.call("drain");
+			await second.exited;
+		}
+	}
 });

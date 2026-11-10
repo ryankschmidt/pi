@@ -99,7 +99,12 @@ async function run(model: string, index: number, rewound: boolean) {
 			try {
 				html = readFileSync(String(fileArgs.file), "utf8");
 			} catch {}
-			const refused = html === null || sha256(html) !== fileArgs.sha256;
+			// As ThroughLine does: the bytes must hash to sha256 and a passing check record must name them.
+			let pass: { schema?: unknown; passed?: unknown; sha256?: unknown } = {};
+			try {
+				pass = JSON.parse(readFileSync(`${String(fileArgs.file)}.pass.json`, "utf8"));
+			} catch {}
+			const refused = html === null || sha256(html) !== fileArgs.sha256 || pass.schema !== "page-check-pass.v1" || pass.passed !== true || pass.sha256 !== fileArgs.sha256;
 			fileRenders.push({ file: String(fileArgs.file), sha256: String(fileArgs.sha256), html, refused });
 			if (refused) program.answerTool(call.id, { content: [{ type: "text", text: "Refused: the page file's bytes do not match sha256." }], isError: true });
 			else {

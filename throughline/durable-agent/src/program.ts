@@ -106,6 +106,9 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		throw error;
 	}
 
+	// Snapshots are point-in-time files, reachable only from the conversation that holds their tool result; old ones
+	// are removed before anything is served (cleanup: a crash mid-rewind leaves no file behind past this start).
+	clearSnapshots(options.storeDir);
 	if (options.reap) {
 		const killed = reapLeftovers(options.storeDir);
 		if (killed > 0) log(`stopped ${killed} command group(s) left by an earlier program`);
@@ -160,8 +163,6 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				stored.agentId = options.agentId;
 				stored.conversationId = id;
 			}, context);
-			// After the commit: a snapshot of the branch the thread showed before must not outlive the rebind.
-			clearSnapshots(options.storeDir);
 		}
 		if (options.carryFrom !== undefined) {
 			const summary = await carrySession(opened, conversation, options.carryFrom, options.storeDir, context);

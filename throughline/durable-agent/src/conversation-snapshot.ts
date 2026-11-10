@@ -1,14 +1,15 @@
-// conversation_snapshot: the agent tool that writes the conversation the thread shows now (the live branch only, in
-// order) to a new file beside the store and returns its path. The store is the only record. A snapshot is a
-// point-in-time file bound to the thread's binding: it is written only while the calling conversation is the bound
-// one, it is withdrawn if a rewind or fork rebinds the thread before it is returned, and every bind removes all
-// snapshots (clearSnapshots), so no file in the folder ever holds a branch the thread no longer shows.
+// conversation_snapshot: the agent tool that writes the calling conversation's visible entries (its live branch, in
+// order) to a new file beside the store and returns its path; the store is the only record. The name binds the
+// conversation and the last entry it saw, so it pins exactly what the file holds, and the path is reachable only
+// through the tool result stored in that conversation. Any branch that holds that result also holds every entry in
+// the file (a fork keeps all entries up to its cut), so a rewind or a crash cannot make a reachable path name withdrawn
+// words. Removing old files (each call, and at program start) is cleanup, not correctness. A reader that already opened
+// a file keeps the bytes it opened; show-me reads only the path its own call returned.
 
 import { chmodSync, closeSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import { defineExtension, defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@earendil-works/pi-durable";
-import { Binding } from "./binding.ts";
 
 export const SNAPSHOT_TOOL = "conversation_snapshot";
 
@@ -26,17 +27,15 @@ export function createConversationSnapshotExtension(storeDir: string, pageSize =
 				// A rerun after a restart writes a fresh snapshot from the committed store.
 				replay: "safe",
 				execute: async (_input: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> => {
-					const written = await writeSnapshot(folder, pageSize, api, context);
-					return typeof written === "string"
-						? { output: [{ type: "text", text: written }] }
-						: { output: [{ type: "text", text: written.refused }], isError: true };
+					const path = await writeSnapshot(folder, pageSize, api, context);
+					return { output: [{ type: "text", text: path }] };
 				},
 			}),
 		],
 	});
 }
 
-/** Remove every snapshot and temporary file: the program calls this after each bind, so no stale branch survives it. */
+/** Remove every snapshot and temporary file; the program calls this at start, before it serves anything (cleanup). */
 export function clearSnapshots(storeDir: string): void {
 	const folder = snapshotFolder(storeDir);
 	let names: string[];
@@ -63,25 +62,21 @@ export function writeAll(
 }
 
 const snapshotFolder = (storeDir: string) => join(storeDir, "snapshots");
-const NOT_BOUND =
-	"Refused: this conversation is no longer the one the thread shows (it was rewound or forked), so no snapshot was written. Call conversation_snapshot again from the current conversation.";
 
 async function writeSnapshot(
 	folder: string,
 	pageSize: number,
 	api: ToolExecutionApi,
 	context: Context,
-): Promise<string | { refused: string }> {
+): Promise<string> {
 	mkdirSync(folder, { recursive: true, mode: 0o700 });
 	chmodSync(folder, 0o700);
 	const temporary = join(folder, `.tmp-${process.pid}-${api.callId.replace(/[^\w-]/g, "_")}`);
-	const bound = (conversationId: number | null | undefined) => conversationId === Number(api.conversationId);
-	let path: string | undefined;
+	let path: string;
 	try {
-		// One commit is one consistent read of the binding and the fork-aware visible range; each page is written as it
-		// arrives, so one page is in memory at a time. The file is opened inside the callback, so a rerun starts it again.
+		// One commit is one consistent read of the fork-aware visible range; each page is written as it arrives, so one
+		// page is in memory at a time. The file is opened inside the callback, so a rerun starts it again.
 		const last = await api.commit(async (tx) => {
-			if (!bound((await tx.doc(Binding)).conversationId)) return undefined;
 			const fd = openSync(temporary, "w", 0o600);
 			try {
 				let lastId = 0;
@@ -99,15 +94,8 @@ async function writeSnapshot(
 				closeSync(fd);
 			}
 		}, context);
-		if (last === undefined) return { refused: NOT_BOUND };
 		path = join(folder, `${Number(api.conversationId)}-${last}.jsonl`);
 		renameSync(temporary, path);
-		// A bind that commits after the read above clears the folder after its commit; this second read catches one
-		// that committed before the rename, so a withdrawn branch is never returned or left behind.
-		if (!bound((await api.snapshot(Binding, context))?.conversationId)) {
-			rmSync(path, { force: true });
-			return { refused: NOT_BOUND };
-		}
 	} finally {
 		rmSync(temporary, { force: true });
 	}
