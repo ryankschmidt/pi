@@ -76,6 +76,9 @@ export type FolderResources = { contextFiles: { path: string; content: string }[
  * of the same name in pi's default, project or configured skills: the install checked these bytes, the others it never saw.
  */
 export const PINNED_SKILLS_DIR = fileURLToPath(new URL("../capabilities/skills/", import.meta.url));
+/** The pinned show-me folder; when it carries its tool, commands the agent runs find it through SHOW_ME_HOME (show-me.md). */
+const PINNED_SHOW_ME = join(PINNED_SKILLS_DIR, "show-me");
+if (existsSync(join(PINNED_SHOW_ME, "dist/cli.js"))) process.env.SHOW_ME_HOME = PINNED_SHOW_ME;
 
 /**
  * Pi's resources for the program: the global APPEND_SYSTEM.md, read once, and each folder's context files and skills,

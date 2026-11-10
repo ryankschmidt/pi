@@ -39,12 +39,13 @@ const legacy = [
 	{ seq: 4, conversation: { id: 3, parent: { conversationId: 1, at: 1 } } },
 	{ seq: 5, entry: user(3, 3, "New branch choice.") },
 ].map((line) => JSON.stringify(line)).join("\n");
-// Round 10: the legacy reading applies only under the name an older agent keeps current; set aside, it is refused.
-console.log(`legacy transcript.jsonl read as legacy: ${JSON.stringify(reader.sentences(reader.fromDurable(legacy, "/store/transcript.jsonl")))}`);
+// Round 11: the reader is chosen by the running agent. Without the snapshot declaration the legacy file is read as legacy;
+// with it (an agent that offers conversation_snapshot) the same file is refused.
+console.log(`legacy transcript.jsonl, agent without conversation_snapshot: ${JSON.stringify(reader.sentences(reader.fromDurable(legacy, false)))}`);
 try {
-	reader.fromDurable(legacy, "/store/transcript.superseded-by-conversation-snapshot.jsonl");
-	console.log("set-aside legacy transcript: READ (wrong)");
+	reader.fromDurable(legacy, true);
+	console.log("legacy transcript in a snapshot agent thread: READ (wrong)");
 } catch (error) {
-	console.log(`set-aside legacy transcript refused: ${(error as Error).message}`);
+	console.log(`legacy transcript in a snapshot agent thread refused: ${(error as Error).message}`);
 }
 process.exit(0);

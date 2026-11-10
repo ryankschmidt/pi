@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { check, install, readPin, rollback } from "../install/runtime.ts";
@@ -65,7 +65,13 @@ function writeChecker(dir: string): void {
 
 /** A stand-in for the shipped show-me.md: a command-only skill named show-me. */
 function fakeShowMe(body = "Show it."): string {
-	const file = join(mkdtempSync(join(tmpdir(), "pi-show-me-")), "show-me.md");
+	const dir = mkdtempSync(join(tmpdir(), "pi-show-me-"));
+	const file = join(dir, "show-me.md");
+	// The shipped show-me folder: the skill, its tool and its visual standard.
+	mkdirSync(join(dir, "dist"));
+	writeFileSync(join(dir, "dist/cli.js"), "console.log(\"show-me\");\n");
+	mkdirSync(join(dir, "references"));
+	writeFileSync(join(dir, "references/Show-Me-Visual-Standard.html"), "<p>standard</p>\n");
 	writeFileSync(file, `---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\npi-durable-transcript: conversation_snapshot\n---\n${body}\n`);
 	return file;
 }
@@ -191,6 +197,23 @@ test("the show-me skill is pinned inside the install: missing or model-callable 
 	assert.ok(!check(runtime, imageModule, showMe).problems.some((p) => p.includes("show-me")));
 	writeFileSync(showMe, "---\nname: show-me\ndescription: Show the work.\ndisable-model-invocation: true\npi-durable-transcript: conversation_snapshot\n---\nShow it better.\n");
 	assert.ok(check(runtime, imageModule, showMe).problems.includes("show-me skill pinned older than shipped; the next agent install picks it up"));
+});
+
+// Rereview10-3 #1: the pinned skill named Mac-only paths for its tool and visual standard, absent on twr and mgr (measured
+// by a full scratch install there). The install pins show-me's tool and references beside SKILL.md, so every host runs
+// the bytes it pinned; a show-me folder without its tool is refused.
+test("the pinned show-me carries its own tool and visual standard; a show-me folder without dist/cli.js is refused", async () => {
+	const fork = fakeFork();
+	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-"));
+	const imageModule = fakeImageModule();
+	const showMe = fakeShowMe();
+	const pin = await install(fork, runtime, null, { imageModule, showMe });
+	const pinned = join(runtime, "versions", pin.id, "throughline/durable-agent/capabilities/skills/show-me");
+	assert.equal(readFileSync(join(pinned, "dist/cli.js"), "utf8"), readFileSync(join(dirname(showMe), "dist/cli.js"), "utf8"));
+	assert.ok(existsSync(join(pinned, "references/Show-Me-Visual-Standard.html")));
+	const toolless = fakeShowMe();
+	rmSync(join(dirname(toolless), "dist"), { recursive: true });
+	await assert.rejects(install(fork, mkdtempSync(join(tmpdir(), "pi-runtime-")), null, { imageModule, showMe: toolless }), /show-me tool is missing at .*dist\/cli\.js; current is unchanged/);
 });
 
 test("check run through a link (as the Health Hub adapter runs it) reports a missing install and exits 1", () => {

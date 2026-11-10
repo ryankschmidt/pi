@@ -66,6 +66,8 @@ const SHOW_ME_TRANSCRIPT_FIELD = "pi-durable-transcript";
  */
 export const SHIPPED_SHOW_ME = join(HOME, "core-root/src/tools/show-me/show-me.md");
 const SHOW_ME_COPY = `${CAPABILITIES}/skills/show-me/SKILL.md`;
+/** The folders of the shipped show-me pinned beside its skill: its tool and its visual standard. */
+const SHOW_ME_PARTS = ["dist", "references"];
 
 /** What the copy holds: the top-level paths taken from the Pi fork root. */
 const COPIED = ["package.json", "node_modules", "packages", "throughline/durable-agent"];
@@ -181,7 +183,7 @@ export async function install(
 				"An install without it would give every new Pi thread no image tools. Ship subscription-images through Ship Warden, then install again.",
 		);
 	}
-	const showMeProblem = skillProblem(showMe, "show-me");
+	const showMeProblem = skillProblem(showMe, "show-me") ?? (existsSync(join(dirname(showMe), "dist/cli.js")) ? undefined : `the show-me tool is missing at ${join(dirname(showMe), "dist/cli.js")}`);
 	if (showMeProblem !== undefined) {
 		throw new Error(
 			`refused: ${showMeProblem}; current is unchanged.\n` +
@@ -208,6 +210,9 @@ export async function install(
 	for (const name of IMAGE_FILES) copyTree(join(imageModule, name), join(target, IMAGE_COPY, name));
 	mkdirSync(dirname(join(target, SHOW_ME_COPY)), { recursive: true });
 	copyTree(showMe, join(target, SHOW_ME_COPY));
+	// Its tool and visual standard are pinned beside it: the skill names them through SHOW_ME_HOME, which the program sets
+	// to this folder, so every host runs the bytes this install checked instead of a Mac-only path (Rereview10-3 #1).
+	for (const part of SHOW_ME_PARTS) copyTree(join(dirname(showMe), part), join(dirname(join(target, SHOW_ME_COPY)), part));
 	// The same loader and checks the agent runs at start, on the bytes this install will run: the copied files, not their
 	// source (a source that loads only beside files the install does not copy is refused here). Then the module's own
 	// schema check, run on those same copied bytes.
