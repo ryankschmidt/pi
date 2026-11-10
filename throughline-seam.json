@@ -1714,7 +1714,8 @@
           "throughline/durable-agent/src/conversation-snapshot.ts",
           "throughline/durable-agent/test/fixtures/faux-snapshot-program.ts",
           "throughline/durable-agent/src/binding.ts",
-          "throughline/durable-agent/test/conversation-snapshot.test.ts"
+          "throughline/durable-agent/test/conversation-snapshot.test.ts",
+          "throughline/durable-agent/proof/delivery-order-probe.ts"
         ]
       }
     ]
