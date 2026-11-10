@@ -1,5 +1,6 @@
 // The agent program with the conversation_snapshot tool over a scripted fake model, for the snapshot tests: a user
-// message starting with "snapshot" makes the model call the tool; every other message is answered "done".
+// message starting with "snapshot" makes the model call the tool, "bash: <command>" runs that command; every other
+// message is answered "done".
 //   node faux-snapshot-program.ts <store dir> <cwd> [page size]
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import { createRegistry } from "@earendil-works/pi-durable";
@@ -16,9 +17,11 @@ const model = faux.getModel();
 const answer = (context: { messages: { role: string; content: unknown }[] }) => {
 	const last = context.messages.at(-1);
 	const text = typeof last?.content === "string" ? last.content : JSON.stringify(last?.content ?? "");
-	return last?.role === "user" && /^\W*(\[\{"type":"text","text":")?snapshot/.test(text)
-		? fauxAssistantMessage(fauxToolCall("conversation_snapshot", {}), { stopReason: "toolUse" })
-		: fauxAssistantMessage("done");
+	if (last?.role !== "user") return fauxAssistantMessage("done");
+	if (/^\W*(\[\{"type":"text","text":")?snapshot/.test(text)) return fauxAssistantMessage(fauxToolCall("conversation_snapshot", {}), { stopReason: "toolUse" });
+	// "bash: <command>" makes the model run that command, as a skill body would tell it to.
+	const command = typeof last.content === "string" ? /^bash: (.*)$/s.exec(last.content)?.[1] : undefined;
+	return command === undefined ? fauxAssistantMessage("done") : fauxAssistantMessage(fauxToolCall("bash", { command }), { stopReason: "toolUse" });
 };
 faux.setResponses(Array.from({ length: 1000 }, () => answer));
 const registry = createRegistry();

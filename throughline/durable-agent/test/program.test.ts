@@ -420,35 +420,22 @@ test("a snapshot starts with its format line, naming the conversation and the la
 	await program.exited;
 });
 
-test("a snapshot cleanup failure never stops the agent and is never silent: logged at start, reported in the stored tool result on a call (Rereview7-1 #3, 7-2 #2)", async () => {
+test("a start-up cleanup failure never stops the agent and is logged (Rereview7-1 #3, 7-2 #2)", async () => {
 	const { store, cwd } = await fresh();
 	const folder = join(store, "snapshots");
-	// An entry cleanup cannot remove: a folder where a snapshot file would be.
-	await mkdir(join(folder, "9-9.jsonl"), { recursive: true });
-	const first = startSnapshot(store, cwd);
-	await first.hello;
-	assert.match(first.stderr(), /snapshot cleanup failed[^\n]*9-9\.jsonl/, "start-up cleanup failure is logged");
-	await turn(first, "snapshot", "c1");
-	const entries = await storedEntries(first);
-	assert.ok(existsSync(snapshotPath(entries)), "the snapshot is still written");
-	assert.match(JSON.stringify(entries), /snapshot cleanup failed[^"]*9-9\.jsonl/, "the call's stored result reports the cleanup failure");
-	await first.call("drain");
-	await first.exited;
-
-	// An unreadable folder at start: logged, and the agent still answers.
+	await mkdir(folder, { recursive: true });
 	await chmod(folder, 0o000);
 	try {
-		const second = startSnapshot(store, cwd);
-		await second.hello;
-		assert.match(second.stderr(), /snapshot cleanup failed/);
-		await turn(second, "still answering", "c2");
-		await second.call("drain");
-		await second.exited;
+		const program = startSnapshot(store, cwd);
+		await program.hello;
+		assert.match(program.stderr(), /snapshot cleanup failed/);
+		await turn(program, "still answering", "c1");
+		await program.call("drain");
+		await program.exited;
 	} finally {
 		await chmod(folder, 0o700);
 	}
 });
-
 test("Rereview9-1 #2: after a rewind no file in the snapshots folder holds withdrawn words, without a restart; the new branch's snapshots stay", async () => {
 	const { store, cwd } = await fresh();
 	const program = startSnapshot(store, cwd);
@@ -475,20 +462,71 @@ test("Rereview9-1 #2: after a rewind no file in the snapshots folder holds withd
 	await program.call("drain");
 	await program.exited;
 });
+// Rereview10-2 #1: a snapshot call deletes nothing: not its own earlier files, not other names in the folder, not
+// temporary files. Withdrawal belongs to the rebind alone.
+test("a snapshot call never deletes anything in the snapshots folder", async () => {
+	const { store, cwd } = await fresh();
+	const program = startSnapshot(store, cwd);
+	await program.hello;
+	await turn(program, "snapshot one", "n1");
+	const first = snapshotPath(await storedEntries(program));
+	const folder = join(store, "snapshots");
+	// Placed after start (start clears the folder): another conversation's name and a temporary file.
+	await writeFile(join(folder, "999-1.jsonl"), "other\n");
+	await writeFile(join(folder, ".tmp-1-x"), "partial\n");
+	const before = new Map(await Promise.all((await readdir(folder)).map(async (name) => [name, await readFile(join(folder, name), "utf8")] as const)));
+	await turn(program, "snapshot two", "n2");
+	const second = snapshotPath(await storedEntries(program));
+	assert.notEqual(second, first);
+	for (const [name, bytes] of before) assert.equal(await readFile(join(folder, name), "utf8"), bytes, `${name} is unchanged after a later snapshot call`);
+	await program.call("drain");
+	await program.exited;
+});
 
-// Rereview9-1 #1: an older agent kept transcript.jsonl current; this agent does not. At start it sets the file aside under
-// a name show-me's legacy reading refuses, so a replayed old skill body cannot read it as current, and never writes it again.
-test("an upgraded store's transcript.jsonl is set aside at start and never rewritten", async () => {
+// Rereview10-2 #1: if a withdrawn branch's snapshot cannot be removed, the rewind is refused, so the thread never moves
+// while that file stays; the agent keeps answering, and the rewind succeeds once removal works.
+test("a rewind whose snapshots cannot be removed is refused, the binding stays, the agent keeps answering", async () => {
+	const { store, cwd } = await fresh();
+	const program = startSnapshot(store, cwd);
+	await program.hello;
+	await turn(program, "Retained.", "w1");
+	await turn(program, "Withdraw me.", "w2");
+	await turn(program, "snapshot", "w3");
+	const stale = snapshotPath(await storedEntries(program));
+	const withdrawn = (await storedEntries(program)).find((entry) => userText(entry) === "Withdraw me.");
+	assert.ok(withdrawn);
+	const folder = join(store, "snapshots");
+	await chmod(folder, 0o500);
+	try {
+		await assert.rejects(program.call("forkBefore", { entryId: withdrawn.id }), /rewind refused/);
+		assert.ok(existsSync(stale), "the snapshot of the still-bound branch is there");
+		assert.ok((await storedEntries(program)).some((entry) => userText(entry) === "Withdraw me."), "the thread is still on its branch");
+		await turn(program, "still answering", "w4");
+	} finally {
+		await chmod(folder, 0o700);
+	}
+	await program.call("forkBefore", { entryId: withdrawn.id });
+	assert.ok(!(await storedEntries(program)).some((entry) => userText(entry) === "Withdraw me."));
+	await assertFolderHolds(store, "Withdraw me.", "after the retried rewind");
+	await program.call("drain");
+	await program.exited;
+});
+
+// Rereview10-1, 10-2, 10-3 #1: no migration. The new program never reads, writes, moves or removes an older agent's
+// transcript.jsonl; instead it declares conversation_snapshot to every command it runs, and show-me reads only snapshots
+// there. So a failed rename has nothing to fail on, and a leftover old file is never read as current by this thread.
+test("an upgraded store's transcript.jsonl is left untouched, and commands the agent runs see PI_DURABLE_TRANSCRIPT", async () => {
 	const { store, cwd } = await fresh();
 	await mkdir(store, { recursive: true });
 	const legacyBytes = `${JSON.stringify({ seq: 1, conversation: { id: 1 } })}\n`;
 	await writeFile(join(store, "transcript.jsonl"), legacyBytes);
 	const program = startSnapshot(store, cwd);
 	await program.hello;
-	assert.ok(!existsSync(join(store, "transcript.jsonl")), "no file named transcript.jsonl remains once the program answers");
-	assert.equal(await readFile(join(store, "transcript.superseded-by-conversation-snapshot.jsonl"), "utf8"), legacyBytes);
 	await turn(program, "New decision after upgrade.", "u1");
-	assert.ok(!existsSync(join(store, "transcript.jsonl")), "the new program never writes it");
+	await turn(program, "bash: printf 'declared=%s' \"$PI_DURABLE_TRANSCRIPT\"", "u2");
+	assert.match(JSON.stringify(await storedEntries(program)), /declared=conversation_snapshot/, "a command the agent runs is told the agent offers conversation_snapshot");
+	assert.equal(await readFile(join(store, "transcript.jsonl"), "utf8"), legacyBytes, "the old file is byte-unchanged");
+	assert.deepEqual((await readdir(store)).filter((name) => name.startsWith("transcript")), ["transcript.jsonl"], "nothing renamed or added");
 	await program.call("drain");
 	await program.exited;
 });

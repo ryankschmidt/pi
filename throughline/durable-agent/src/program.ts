@@ -24,7 +24,7 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { Binding } from "./binding.ts";
 import { carrySession } from "./carry.ts";
-import { clearSnapshots, setAsideLegacyTranscript } from "./conversation-snapshot.ts";
+import { clearSnapshots, withdrawSnapshotsAndRebind } from "./conversation-snapshot.ts";
 import { lockStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
 import { reapLeftovers, startReaper } from "./reaper.ts";
 import {
@@ -106,10 +106,10 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		throw error;
 	}
 
-	// Before anything is served: snapshots a crash left (including one a rebind committed but never cleared) are removed,
-	// and an older agent's transcript.jsonl is set aside. Failures are logged and the agent still starts.
+	// Before anything is served: snapshots and killed writes' temporary files are removed (cleanup; a rebind already
+	// withdrew any other branch's files before committing). Failures are logged and the agent still starts. An older
+	// agent's transcript.jsonl is never read, written, moved or removed here.
 	for (const failure of clearSnapshots(options.storeDir)) log(failure);
-	setAsideLegacyTranscript(options.storeDir, log);
 	if (options.reap) {
 		const killed = reapLeftovers(options.storeDir);
 		if (killed > 0) log(`stopped ${killed} command group(s) left by an earlier program`);
@@ -156,17 +156,20 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			conversation = found;
 		} else {
 			conversation = await opened.root(context, { agent: options.initialAgent });
-			await bind(conversation.id);
+			// A new store has no snapshots and no earlier branch: the first binding is committed directly.
+			await commitBinding(conversation.id);
 		}
 		async function bind(id: ConversationId) {
+			// Snapshots are withdrawn before the binding moves; if one cannot be removed the rebind is refused (see
+			// conversation-snapshot.ts), so no withdrawn branch's file outlives a completed rewind.
+			await withdrawSnapshotsAndRebind(options.storeDir, () => commitBinding(id));
+		}
+		async function commitBinding(id: ConversationId) {
 			await opened.commit(async (tx) => {
 				const stored = await tx.doc(Binding);
 				stored.agentId = options.agentId;
 				stored.conversationId = id;
 			}, context);
-			// After the commit: every snapshot of the conversation the thread left is withdrawn with it (a snapshot finishing
-			// across this commit removes its own file; a crash before this line is covered by the clear at start).
-			for (const failure of clearSnapshots(options.storeDir)) log(failure);
 		}
 		if (options.carryFrom !== undefined) {
 			const summary = await carrySession(opened, conversation, options.carryFrom, options.storeDir, context);
@@ -244,9 +247,10 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 						{ ownership: { kind: "ownerless" } },
 						context,
 					);
+					// Bind first: a refused rebind (see conversation-snapshot.ts) leaves the thread, its watches and conversation as they were.
+					await bind(fork.id);
 					await stopWatches();
 					conversation = fork;
-					await bind(fork.id);
 					return { conversationId: fork.id };
 				}
 				case "watch": {
@@ -341,9 +345,9 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 									context,
 								)
 							: await conversation.fork(previous.id, { ownership: { kind: "ownerless" } }, context);
+					await bind(next.id);
 					await stopWatches();
 					conversation = next;
-					await bind(next.id);
 					return { conversationId: next.id, at: previous?.id ?? null };
 				}
 			}

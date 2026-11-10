@@ -2,27 +2,33 @@
 // order) to a new file beside the store and returns its path; the store is the only record. The name binds the
 // conversation and the last entry it saw, so it pins exactly what the file holds.
 //
-// Lifetime: a snapshot file lives while its conversation is the thread's bound one. A snapshot call never removes a file
-// of its own conversation, so a path it returned stays readable for the consumer it was handed to, however many calls
-// follow. Snapshots of any other conversation are removed when the thread binds another conversation (a rewind or fork,
-// see program.ts), again at program start before anything is served, and again by the next snapshot call if either
-// removal failed; failures are reported, never stopping the agent. A call running in a conversation that is no longer
-// bound writes nothing, and a file finished while a rewind landed is removed by its own call. So listing the folder (0700,
-// the agent's own user) finds only the live branch's snapshots. A reader that already opened a file keeps its bytes.
+// Lifetime: a snapshot call never deletes anything. Its files live while their conversation is the thread's bound one,
+// so a returned path stays readable however many calls follow. Only the binding owner withdraws them: a rebind (rewind or
+// fork, program.ts) waits for snapshot writes in progress, removes every snapshot, and commits the new binding only if
+// every removal succeeded; otherwise the rebind is refused, the thread stays on its branch and the agent keeps working.
+// Writes that start meanwhile wait, then write nothing if their conversation is no longer bound. Program start also
+// removes snapshots and killed writes' temporary files before serving. So listing the folder (0700, the agent's own
+// user) never finds a withdrawn branch's snapshot. A reader that already opened a file keeps its bytes.
+//
+// Offering the tool is declared to every command the agent runs: PI_DURABLE_TRANSCRIPT=conversation_snapshot tells
+// show-me to read only snapshots in this thread, never an older agent's transcript.jsonl.
 
 import { chmodSync, closeSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import { defineExtension, defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@earendil-works/pi-durable";
-import { Binding, type StoredBinding } from "./binding.ts";
+import { Binding } from "./binding.ts";
 
 export const SNAPSHOT_TOOL = "conversation_snapshot";
 /** The first line of every snapshot; show-me refuses a Durable file without it (an older transcript.jsonl holds every branch). */
 export const SNAPSHOT_FORMAT = "pi-durable-conversation-snapshot.v1";
+/** The environment variable through which the running agent tells its commands (show-me) it offers conversation_snapshot. */
+export const TRANSCRIPT_ENV = "PI_DURABLE_TRANSCRIPT";
 
 /** The extension carrying the tool; snapshots go in `storeDir/snapshots/`, read `pageSize` entries at a time. */
 export function createConversationSnapshotExtension(storeDir: string, pageSize = 500) {
 	const folder = snapshotFolder(storeDir);
+	process.env[TRANSCRIPT_ENV] = SNAPSHOT_TOOL;
 	return defineExtension({
 		name: "conversation-snapshot",
 		tools: [
@@ -34,12 +40,7 @@ export function createConversationSnapshotExtension(storeDir: string, pageSize =
 				// A rerun after a restart writes a fresh snapshot from the committed store.
 				replay: "safe",
 				execute: async (_input: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> => {
-					const { path, cleanupFailures } = await writeSnapshot(folder, pageSize, api, context);
-					// Cleanup is not correctness, but a failure must be seen: it is stored with this call's result in the thread.
-					for (const failure of cleanupFailures) {
-						process.stderr.write(`${failure}\n`);
-						api.diagnostic({ severity: "warn", code: "snapshot-cleanup-failed", message: failure });
-					}
+					const path = await whileWriting(folder, () => writeSnapshot(folder, pageSize, api, context));
 					return { output: [{ type: "text", text: path }] };
 				},
 			}),
@@ -47,31 +48,57 @@ export function createConversationSnapshotExtension(storeDir: string, pageSize =
 	});
 }
 
-/**
- * Remove every snapshot and temporary file (the program calls this at start and after each rebind). Returns one line
- * per failure; only an absent folder counts as nothing to remove.
- */
+/** Remove every snapshot and temporary file (program start, before serving). Returns one line per failure. */
 export function clearSnapshots(storeDir: string): string[] {
-	return removeSnapshots(snapshotFolder(storeDir), () => false);
+	return removeSnapshots(snapshotFolder(storeDir));
 }
 
-/** The name an older agent's transcript.jsonl is moved to; show-me reads the legacy format only under transcript.jsonl. */
-export const LEGACY_TRANSCRIPT_ASIDE = "transcript.superseded-by-conversation-snapshot.jsonl";
-
 /**
- * Move an older agent's transcript.jsonl aside (program start). That agent kept it current; this one never writes it, so
- * left in place a replayed old skill body could read it as current while it misses every new turn. It is derived from
- * the store, and an older agent rolled back in rebuilds it whole at its start. A failure is logged; the agent still starts.
+ * The rebind (program.ts): wait for snapshot writes in progress, remove every snapshot, then run `commit` (the binding
+ * commit) only if every removal succeeded; otherwise throw without committing, so no withdrawn branch's file outlives it.
  */
-export function setAsideLegacyTranscript(storeDir: string, log: (line: string) => void): void {
+export async function withdrawSnapshotsAndRebind(storeDir: string, commit: () => Promise<void>): Promise<void> {
+	const folder = snapshotFolder(storeDir);
+	const gate = gateFor(folder);
+	while (gate.rebinding) await gate.rebinding.catch(() => undefined);
+	const run = (async () => {
+		if (gate.writers > 0) await new Promise<void>((resolve) => gate.idle.push(resolve));
+		const failures = removeSnapshots(folder);
+		if (failures.length > 0) {
+			throw new Error(`rewind refused, the thread stays on its branch: its snapshots could not all be withdrawn (${failures.join("; ")}). Fix the folder's permissions, then rewind again.`);
+		}
+		await commit();
+	})();
+	gate.rebinding = run;
 	try {
-		renameSync(join(storeDir, "transcript.jsonl"), join(storeDir, LEGACY_TRANSCRIPT_ASIDE));
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") log(`could not set aside ${join(storeDir, "transcript.jsonl")} (${message(error)}); show-me may read it as current`);
+		await run;
+	} finally {
+		if (gate.rebinding === run) gate.rebinding = undefined;
 	}
 }
 
-function removeSnapshots(folder: string, keep: (name: string) => boolean): string[] {
+/** Per snapshot folder: writes in progress, and a rebind that waits for them while new writes wait for it. */
+type Gate = { writers: number; idle: (() => void)[]; rebinding: Promise<void> | undefined };
+const gates = new Map<string, Gate>();
+function gateFor(folder: string): Gate {
+	let gate = gates.get(folder);
+	if (gate === undefined) gates.set(folder, (gate = { writers: 0, idle: [], rebinding: undefined }));
+	return gate;
+}
+
+async function whileWriting<T>(folder: string, write: () => Promise<T>): Promise<T> {
+	const gate = gateFor(folder);
+	while (gate.rebinding) await gate.rebinding.catch(() => undefined);
+	gate.writers++;
+	try {
+		return await write();
+	} finally {
+		gate.writers--;
+		if (gate.writers === 0) for (const resolve of gate.idle.splice(0)) resolve();
+	}
+}
+
+function removeSnapshots(folder: string): string[] {
 	let names: string[];
 	try {
 		names = readdirSync(folder);
@@ -81,9 +108,8 @@ function removeSnapshots(folder: string, keep: (name: string) => boolean): strin
 	}
 	const failures: string[] = [];
 	for (const name of names) {
-		if (keep(name)) continue;
 		try {
-			rmSync(join(folder, name), { force: true });
+			rmSync(join(folder, name), { recursive: true, force: true });
 		} catch (error) {
 			failures.push(`snapshot cleanup failed: could not remove ${join(folder, name)} (${message(error)})`);
 		}
@@ -110,61 +136,42 @@ export function writeAll(
 const snapshotFolder = (storeDir: string) => join(storeDir, "snapshots");
 const HEADER_WIDTH = 160;
 
-async function writeSnapshot(
-	folder: string,
-	pageSize: number,
-	api: ToolExecutionApi,
-	context: Context,
-): Promise<{ path: string; cleanupFailures: string[] }> {
+async function writeSnapshot(folder: string, pageSize: number, api: ToolExecutionApi, context: Context): Promise<string> {
 	mkdirSync(folder, { recursive: true, mode: 0o700 });
 	chmodSync(folder, 0o700);
 	const temporary = join(folder, `.tmp-${process.pid}-${api.callId.replace(/[^\w-]/g, "_")}`);
 	const conversation = Number(api.conversationId);
-	const bound = (binding: StoredBinding | undefined) => binding?.conversationId === conversation;
-	let path: string;
-	try {
-		// One commit is one consistent read of the binding and the fork-aware visible range; each page is written as it
-		// arrives, so one page is in memory at a time. The file is opened inside the callback, so a rerun starts it again.
-		const last = await api.commit(async (tx) => {
-			if (!bound(await tx.doc(Binding))) return undefined;
-			const fd = openSync(temporary, "w", 0o600);
-			try {
-				// The format line is written first at a fixed width and filled in once the last entry is known.
-				const header = (lastEntryId: number) =>
-					Buffer.from(`${JSON.stringify({ format: SNAPSHOT_FORMAT, conversationId: Number(api.conversationId), lastEntryId }).padEnd(HEADER_WIDTH - 1)}\n`);
-				writeAll(fd, header(0));
-				let lastId = 0;
-				let cursor: Parameters<typeof tx.scanEntries>[2];
-				do {
-					const page = await tx.scanEntries({ conversationId: api.conversationId, order: "ascending" }, pageSize, cursor);
-					if (page.items.length > 0) {
-						writeAll(fd, Buffer.from(page.items.map((entry) => `${JSON.stringify({ entry })}\n`).join("")));
-						lastId = Number(page.items[page.items.length - 1]?.id);
-					}
-					cursor = page.next;
-				} while (cursor !== undefined);
-				writeAll(fd, header(lastId), (handle, bytes, offset, length) => writeSync(handle, bytes, offset, length, offset));
-				return lastId;
-			} finally {
-				closeSync(fd);
-			}
-		}, context);
-		if (last === undefined) throw new Error(NOT_BOUND);
-		path = join(folder, `${conversation}-${last}.jsonl`);
-		renameSync(temporary, path);
-	} finally {
-		rmSync(temporary, { force: true });
-	}
-	// A rebind that committed while this file was written: its cleanup may have run before the rename, so this call
-	// removes its own file (program.ts clears after the binding commit, so one of the two always sees the other).
-	if (!bound(await api.snapshot(Binding, context))) {
-		rmSync(path, { force: true });
-		throw new Error(NOT_BOUND);
-	}
-	// Retry what a failed rebind cleanup left: other conversations' snapshots and a killed program's temporary files.
-	// This conversation's snapshots and this program's in-flight temporary files stay.
-	const cleanupFailures = removeSnapshots(folder, (name) => name.startsWith(`${conversation}-`) || name.startsWith(`.tmp-${process.pid}-`));
-	return { path, cleanupFailures };
+	// One commit is one consistent read of the binding and the fork-aware visible range; each page is written as it
+	// arrives, so one page is in memory at a time. The file is opened inside the callback, so a rerun starts it again.
+	// A failed write leaves only its temporary file, which program start removes; this call deletes nothing.
+	const last = await api.commit(async (tx) => {
+		if ((await tx.doc(Binding)).conversationId !== conversation) return undefined;
+		const fd = openSync(temporary, "w", 0o600);
+		try {
+			// The format line is written first at a fixed width and filled in once the last entry is known.
+			const header = (lastEntryId: number) =>
+				Buffer.from(`${JSON.stringify({ format: SNAPSHOT_FORMAT, conversationId: conversation, lastEntryId }).padEnd(HEADER_WIDTH - 1)}\n`);
+			writeAll(fd, header(0));
+			let lastId = 0;
+			let cursor: Parameters<typeof tx.scanEntries>[2];
+			do {
+				const page = await tx.scanEntries({ conversationId: api.conversationId, order: "ascending" }, pageSize, cursor);
+				if (page.items.length > 0) {
+					writeAll(fd, Buffer.from(page.items.map((entry) => `${JSON.stringify({ entry })}\n`).join("")));
+					lastId = Number(page.items[page.items.length - 1]?.id);
+				}
+				cursor = page.next;
+			} while (cursor !== undefined);
+			writeAll(fd, header(lastId), (handle, bytes, offset, length) => writeSync(handle, bytes, offset, length, offset));
+			return lastId;
+		} finally {
+			closeSync(fd);
+		}
+	}, context);
+	if (last === undefined) throw new Error(NOT_BOUND);
+	const path = join(folder, `${conversation}-${last}.jsonl`);
+	renameSync(temporary, path);
+	return path;
 }
 
 const NOT_BOUND =
