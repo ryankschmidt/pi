@@ -79,4 +79,7 @@ await run(OLD, "4. rolled back to the installed old agent program", async (progr
 	await turn(program, "Back on the old program.", "f");
 	console.log(`record names a socket: ${owner().reads?.socket !== undefined}; show-me from outside: ${await build(undefined, join(store, "transcript.jsonl"), "Back on the old program.")}`);
 });
+// Lead's ruling: with the old program running (a live owner.lock with no read socket) show-me reads its rebuilt file;
+// with nothing running the marked store is refused.
+console.log(`rolled back, old program stopped: store marked: ${existsSync(join(store, "owner-reads.v1"))}; owner record: ${existsSync(join(store, "owner.lock"))}; show-me from outside: ${await build(undefined, join(store, "transcript.jsonl"), "Back on the old program.")}`);
 process.exit(0);
