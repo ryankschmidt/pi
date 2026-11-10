@@ -434,3 +434,27 @@ test("a snapshot cleanup failure never stops the agent and is never silent: logg
 		await chmod(folder, 0o700);
 	}
 });
+
+test("Rereview8-3 #2: a snapshot taken before a rewind is not reachable from the new live branch, though its file stays on disk until cleanup", async () => {
+	const { store, cwd } = await fresh();
+	const program = startSnapshot(store, cwd);
+	await program.hello;
+	await turn(program, "Retained choice.", "r1");
+	await turn(program, "Withdrawn.", "r2");
+	await turn(program, "snapshot before the rewind", "r3");
+	const before = await storedEntries(program);
+	const stale = snapshotPath(before);
+	const withdrawn = before.find((entry) => userText(entry) === "Withdrawn.");
+	assert.ok(withdrawn);
+	await program.call("forkBefore", { entryId: withdrawn.id });
+	await turn(program, "New branch.", "r4");
+	const { paths } = await reachableSnapshots(program);
+	assert.ok(!paths.includes(stale), "the old path is not named anywhere in the live branch");
+	await assertReachableAreLive(program, "Withdrawn.", "after rewind");
+	// Outside the thread the file is an ordinary file until the next snapshot call or start removes it.
+	assert.ok(existsSync(stale), "still on disk: a person or process holding the path can open it until cleanup");
+	await turn(program, "snapshot after the rewind", "r5");
+	assert.ok(!existsSync(stale), "the next snapshot call removes it");
+	await program.call("drain");
+	await program.exited;
+});

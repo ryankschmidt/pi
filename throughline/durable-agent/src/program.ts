@@ -106,8 +106,8 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		throw error;
 	}
 
-	// Snapshots are point-in-time files, reachable only from the conversation that holds their tool result; old ones
-	// are removed before anything is served (cleanup: a crash mid-rewind leaves no file behind past this start).
+	// Old snapshots are removed here, before anything is served, when removal succeeds; a failure is logged and the agent
+	// still starts (cleanup, not correctness: the thread can only reach a snapshot of its own branch).
 	for (const failure of clearSnapshots(options.storeDir)) log(failure);
 	if (options.reap) {
 		const killed = reapLeftovers(options.storeDir);

@@ -5,8 +5,9 @@
 // is a rewound thread: the withdrawn turn holds the most on-topic sentence, and the page must never quote it.
 //   node proof/show-me-page-eval.ts --out <results.json> [--runs 10] [--models a,b] [--parallel 4]
 // A run passes only when: conversation_snapshot ran before build and build's --transcript is the path it returned;
-// build and check each have a stored, successful result; and the last page sent to html_render hashes to the sha256 of
-// the page the passing check approved. A missing result is a failure. (Binding publish to the check is TQ-974.)
+// build and check each have a stored, successful result; the last page sent to html_render hashes to the sha256 of
+// the page the passing check approved; and its words line is a sentence from the retained turn, never the withdrawn one
+// (show-me-score.ts). A missing result is a failure, and the process exits non-zero if any run failed.
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { SHIPPED_SHOW_ME } from "../install/runtime.ts";
 import { type AgentProgram, startProgram } from "../src/client.ts";
+import { exitCode, scoreRun } from "./show-me-score.ts";
 
 const { values } = parseArgs({
 	options: {
@@ -151,10 +153,19 @@ async function run(model: string, index: number, rewound: boolean) {
 		build_transcript_is_snapshot: snapshotPath !== undefined && buildTranscript === snapshotPath,
 		html_render_calls: renders.length,
 		published_checked_bytes,
-		passed:
-			snapshotBeforeBuild && snapshotPath !== undefined && buildTranscript === snapshotPath && succeeded(builds) && succeeded(checks) && published_checked_bytes,
+		passed: scoreRun({
+			snapshotBeforeBuild,
+			buildTranscriptIsSnapshot: snapshotPath !== undefined && buildTranscript === snapshotPath,
+			buildSucceeded: succeeded(builds),
+			checkSucceeded: succeeded(checks),
+			publishedCheckedBytes: published_checked_bytes,
+			rewound,
+			words,
+			retained: CONTEXT,
+			withdrawn: WITHDRAWN,
+		}),
 		words_from_user_turn: words !== null && words.picked === false && CONTEXT.includes(words.text),
-		words_never_withdrawn: words === null || !WITHDRAWN.includes(words.text),
+		words_never_withdrawn: words !== null && !WITHDRAWN.includes(words.text),
 		page_words: words,
 		tool_calls: calls.length,
 		seconds: Math.round((Date.now() - started) / 1000),
@@ -202,5 +213,5 @@ const summary = Object.fromEntries(
 );
 writeFileSync(values.out as string, `${JSON.stringify({ schema: "durable-agent.show-me-page-eval.v3", ran_at: new Date().toISOString(), context: CONTEXT, command: COMMAND, summary, results }, null, 2)}\n`);
 console.log(JSON.stringify(summary, null, 1));
-// A killed agent's detached children can keep the event loop alive; the results are written, so end here.
-process.exit(0);
+// A killed agent's detached children can keep the event loop alive; the results are written, so end here, non-zero if any run failed.
+process.exit(exitCode(results.map((r) => r.passed)));

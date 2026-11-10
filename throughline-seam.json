@@ -135,7 +135,7 @@
       "imported_private_symbols": [],
       "schema_assumptions": [],
       "contract_inspection": "not-reviewed: empty symbol/schema lists do not assert absence; behavior coverage is separately capability-gated",
-      "conflict_rule": "Keep the installer's refuse-before-switch checks on the copied files: the subscription-images manifest hashes (schemas are validated by that component's build, so the installer carries no validator) and show-me's pi-durable-transcript field.",
+      "conflict_rule": "Keep the installer's refuse-before-switch checks on the copied files: the image module's own shipped check-image-schemas.mjs run on the copy (the installer carries no validator) and show-me's pi-durable-transcript field.",
       "conflict_rule_source": "authored",
       "conflict_rule_inferred": false,
       "marker": false,
@@ -1767,7 +1767,9 @@
           "throughline/durable-agent/src/binding.ts",
           "throughline/durable-agent/test/conversation-snapshot.test.ts",
           "throughline/durable-agent/proof/delivery-order-probe.ts",
-          "throughline/durable-agent/proof/snapshot-reader-probe.ts"
+          "throughline/durable-agent/proof/snapshot-reader-probe.ts",
+          "throughline/durable-agent/proof/show-me-score.ts",
+          "throughline/durable-agent/test/show-me-score.test.ts"
         ]
       }
     ]

@@ -2,7 +2,7 @@
 // shipped subscription-images module, copied by the installer into `capabilities/subscription-images/` beside this
 // program and pinned with it, so a later ship of that module never changes a running install. An absent, unloadable
 // or incompatible copy never stops the agent: it starts without the tools and says why. The installer refuses such a
-// copy before it switches an install in, using the same loader plus the installer's schema check.
+// copy before it switches an install in, using the same loader and then the module's own shipped schema check.
 
 import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -89,7 +89,7 @@ function toolsOf(exports: Record<string, unknown>, defaultCwd: string): ToolRegi
 		if (typeof description !== "string" || description.length === 0) throw new Error(`${name} has no description`);
 		if (!isRecord(schema) || schema.type !== "object" || !isRecord(schema.properties)) throw new Error(`${name} has no object parameter schema`);
 		// Pi's own compiler validates the tool's arguments at run time, so it must accept the schema. The full JSON Schema
-		// check runs in the installer, on the read-only copy this program loads (install/runtime.ts).
+		// check is the module's own check-image-schemas.mjs, which the installer runs on the copy this program loads.
 		compile(schema as JsonSchema);
 		return defineTool({
 			name,

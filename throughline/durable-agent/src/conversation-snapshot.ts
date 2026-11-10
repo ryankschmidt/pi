@@ -1,10 +1,10 @@
 // conversation_snapshot: the agent tool that writes the calling conversation's visible entries (its live branch, in
 // order) to a new file beside the store and returns its path; the store is the only record. The name binds the
-// conversation and the last entry it saw, so it pins exactly what the file holds, and the path is reachable only
-// through the tool result stored in that conversation. Any branch that holds that result also holds every entry in
-// the file (a fork keeps all entries up to its cut), so a rewind or a crash cannot make a reachable path name withdrawn
-// words. Removing old files (each call, and at program start) is cleanup, not correctness. A reader that already opened
-// a file keeps the bytes it opened; show-me reads only the path its own call returned.
+// conversation and the last entry it saw, so it pins exactly what the file holds. Inside the thread the path appears
+// only in the tool result stored in that conversation, and any branch that holds that result also holds every entry in
+// the file (a fork keeps all entries up to its cut), so nothing the thread can reach names withdrawn words. Outside the
+// thread a file is an ordinary 0600 file: a person or process holding its path can open it until the next call or
+// program start removes it, and a reader that already opened it keeps its bytes. Cleanup failures are reported.
 
 import { chmodSync, closeSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";

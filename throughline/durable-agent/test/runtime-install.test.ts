@@ -41,22 +41,25 @@ function fakeImageModule(tools: string[] = IMAGE_TOOLS, schemas: Record<string, 
 		`export const imageToolDescriptions = ${JSON.stringify(descriptions)};\nexport const imageToolParameters = ${JSON.stringify(parameters)};\n`,
 	);
 	writeFileSync(join(dir, "effects.mjs"), "export const runImageTool = () => undefined;\n");
-	writeManifest(dir, tools);
+	writeChecker(dir);
 	return dir;
 }
 
-/** The manifest subscription-images' build writes after its schema check: the tools and each shipped file's hash. */
-function writeManifest(dir: string, tools: string[] = IMAGE_TOOLS): void {
-	const sha = (name: string) => createHash("sha256").update(readFileSync(join(dir, name))).digest("hex");
+/**
+ * A stand-in for the shipped check-image-schemas.mjs (the real one bundles Ajv; its cases are tested in
+ * subscription-images). This one refuses a required name with no property, the reviewers' case, by reading the schemas.
+ */
+function writeChecker(dir: string): void {
 	writeFileSync(
-		join(dir, "image-tools.manifest.json"),
-		JSON.stringify({
-			schema: "subscription-images.image-tools-manifest.v1",
-			version: "0.2.6",
-			validator: { name: "ajv", version: "8.20.0", dialect: "2020-12", strictSchema: true, strictRequired: true },
-			tools,
-			files: { "shared.mjs": sha("shared.mjs"), "effects.mjs": sha("effects.mjs") },
-		}),
+		join(dir, "check-image-schemas.mjs"),
+		[
+			'import { join } from "node:path";',
+			'import { pathToFileURL } from "node:url";',
+			'const { imageToolParameters } = await import(pathToFileURL(join(process.argv[2], "shared.mjs")).href);',
+			"for (const [name, schema] of Object.entries(imageToolParameters ?? {})) {",
+			'\tfor (const key of schema?.required ?? []) if (!schema.properties || !(key in schema.properties)) { process.stderr.write(name + \': strict mode: required property "\' + key + \'" is not defined\\n\'); process.exit(1); }',
+			"}",
+		].join("\n"),
 	);
 }
 
@@ -104,13 +107,13 @@ test("the image module is pinned inside the install: missing or incompatible ref
 	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-"));
 	const showMe = fakeShowMe();
 	const missing = mkdtempSync(join(tmpdir(), "pi-images-missing-"));
-	await assert.rejects(install(fork, runtime, null, { imageModule: missing, showMe }), /lacks shared\.mjs, effects\.mjs, image-tools\.manifest\.json; current is unchanged/);
+	await assert.rejects(install(fork, runtime, null, { imageModule: missing, showMe }), /lacks shared\.mjs, effects\.mjs, check-image-schemas\.mjs; current is unchanged/);
 	assert.equal(existsSync(join(runtime, "current")), false);
 	// Both files present and loadable, exporting the wrong names: refused before current moves.
 	const wrong = mkdtempSync(join(tmpdir(), "pi-images-wrong-"));
 	writeFileSync(join(wrong, "shared.mjs"), "export const unrelated = 1;\n");
 	writeFileSync(join(wrong, "effects.mjs"), "export const alsoUnrelated = 2;\n");
-	writeManifest(wrong);
+	writeChecker(wrong);
 	await assert.rejects(install(fork, runtime, null, { imageModule: wrong, showMe }), /imageToolDescriptions is not an object\); the new copy is left unused at .*; current is unchanged/);
 	assert.equal(existsSync(join(runtime, "current")), false);
 
@@ -136,16 +139,12 @@ test("the image module is pinned inside the install: missing or incompatible ref
 		await assert.rejects(install(fork, runtime, null, { imageModule: fakeImageModule(IMAGE_TOOLS, { generate_image: schema }), showMe }), reason);
 		assert.equal(readPin(runtime)?.id, pin.id);
 	}
-	// Rereview5-2 #2: the installer carries no validator; it copies only files whose hashes the build's manifest names.
-	const unvalidated = fakeImageModule();
-	writeFileSync(join(unvalidated, "image-tools.manifest.json"), "");
-	await assert.rejects(install(fork, runtime, null, { imageModule: unvalidated, showMe }), /image-tools\.manifest\.json is not a subscription-images manifest[\s\S]*current is unchanged/);
-	const edited = fakeImageModule();
-	writeFileSync(join(edited, "effects.mjs"), "export const runImageTool = () => 'edited after the build';\n");
-	await assert.rejects(install(fork, runtime, null, { imageModule: edited, showMe }), /effects\.mjs does not match the hash its build's schema check recorded[\s\S]*current is unchanged/);
-	const renamed = fakeImageModule();
-	writeManifest(renamed, ["generate_image", "edit_image", "erase_image"]);
-	await assert.rejects(install(fork, runtime, null, { imageModule: renamed, showMe }), /names tools generate_image, edit_image, erase_image, not the copy's/);
+	// Rereview8-1 #1: a malformed schema with a matching hand-made hash list was installed. The installer now runs the
+	// module's own shipped checker on the copied bytes, so no record can stand in for the check.
+	const forged = fakeImageModule(IMAGE_TOOLS, { generate_image: { type: "object", properties: {}, required: ["ghost"] } });
+	const sha = (name: string) => createHash("sha256").update(readFileSync(join(forged, name))).digest("hex");
+	writeFileSync(join(forged, "image-tools.manifest.json"), JSON.stringify({ schema: "subscription-images.image-tools-manifest.v1", tools: IMAGE_TOOLS, files: { "shared.mjs": sha("shared.mjs"), "effects.mjs": sha("effects.mjs") } }));
+	await assert.rejects(install(fork, runtime, null, { imageModule: forged, showMe }), /its schema check refused the copied files[\s\S]*required property "ghost" is not defined[\s\S]*current is unchanged/);
 	assert.equal(readPin(runtime)?.id, pin.id);
 	// The check runs on the copied files: this source loads only beside a file the install does not copy.
 	const leaning = fakeImageModule();

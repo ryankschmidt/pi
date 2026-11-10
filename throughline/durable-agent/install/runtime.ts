@@ -54,10 +54,9 @@ const DURABLE_CLIENT_MARKERS = ["Pi Durable agent program exited", "routePiAdapt
 export const SHIPPED_IMAGE_MODULE = join(HOME, "core-root/src/tools/subscription-images");
 const CAPABILITIES = "throughline/durable-agent/capabilities";
 const IMAGE_COPY = `${CAPABILITIES}/subscription-images`;
-const IMAGE_FILES = ["shared.mjs", "effects.mjs", "image-tools.manifest.json"];
-/** Written by subscription-images' build after its schema check (Ajv 2020, strict): the tools and each file's hash. */
-const IMAGE_MANIFEST = "image-tools.manifest.json";
-const IMAGE_MANIFEST_SCHEMA = "subscription-images.image-tools-manifest.v1";
+const IMAGE_FILES = ["shared.mjs", "effects.mjs", "check-image-schemas.mjs"];
+/** The image module's own schema check, shipped with it and bundled with its validator; run on the copied bytes. */
+const IMAGE_CHECKER = "check-image-schemas.mjs";
 /** The show-me frontmatter field that says its Pi Durable transcript comes from conversation_snapshot. */
 const SHOW_ME_TRANSCRIPT_FIELD = "pi-durable-transcript";
 /**
@@ -147,28 +146,18 @@ function skillProblem(file: string, name: string): string | undefined {
 }
 
 /**
- * Undefined when the copied image module carries the manifest subscription-images' build wrote after its schema check,
- * its hashes match the copied files and its tools are the ones the copy provides; otherwise why not. The schemas are
- * validated where they are built, so this installer needs no validator of its own.
+ * Undefined when the module's own shipped checker passes the copied files; otherwise its refusal. The check reads the
+ * schemas themselves (JSON Schema 2020-12, Ajv strict, bundled in the checker), so no hand-made record can stand in for
+ * it, and this installer carries no validator of its own. It runs in a child process with a time limit.
  */
-function imageManifestProblem(dir: string, tools: readonly string[]): string | undefined {
-	let manifest: { schema?: unknown; tools?: unknown; files?: Record<string, unknown> };
+function imageCheckProblem(dir: string): string | undefined {
 	try {
-		manifest = JSON.parse(readFileSync(join(dir, IMAGE_MANIFEST), "utf8"));
-	} catch {
-		manifest = {};
+		execFileSync(process.execPath, [join(dir, IMAGE_CHECKER), dir], { stdio: "pipe", timeout: 60_000 });
+		return undefined;
+	} catch (error) {
+		const detail = String((error as { stderr?: Buffer }).stderr ?? "").trim() || (error instanceof Error ? error.message : String(error));
+		return `its schema check refused the copied files (${detail})`;
 	}
-	if (manifest.schema !== IMAGE_MANIFEST_SCHEMA || !Array.isArray(manifest.tools) || typeof manifest.files !== "object" || manifest.files === null) {
-		return `${IMAGE_MANIFEST} is not a subscription-images manifest (${IMAGE_MANIFEST_SCHEMA}), so nothing records that the schemas passed the build's check`;
-	}
-	for (const name of IMAGE_FILES.filter((file) => file !== IMAGE_MANIFEST)) {
-		const sha = createHash("sha256").update(readFileSync(join(dir, name))).digest("hex");
-		if (manifest.files[name] !== sha) return `${name} does not match the hash its build's schema check recorded in ${IMAGE_MANIFEST}`;
-	}
-	if ([...manifest.tools].sort().join(",") !== [...tools].sort().join(",")) {
-		return `${IMAGE_MANIFEST} names tools ${manifest.tools.join(", ")}, not the copy's ${tools.join(", ")}`;
-	}
-	return undefined;
 }
 
 export function readPin(runtime: string): Pin | null {
@@ -222,10 +211,10 @@ export async function install(
 	mkdirSync(dirname(join(target, SHOW_ME_COPY)), { recursive: true });
 	execFileSync("cp", [showMe, join(target, SHOW_ME_COPY)]);
 	// The same loader and checks the agent runs at start, on the bytes this install will run: the copied files, not their
-	// source (a source that loads only beside files the install does not copy is refused here). Then the manifest: the
-	// copied bytes must be the ones subscription-images' build validated.
+	// source (a source that loads only beside files the install does not copy is refused here). Then the module's own
+	// schema check, run on those same copied bytes.
 	const checked = await imageModuleTools(join(target, IMAGE_COPY));
-	const imageProblem = typeof checked === "string" ? checked : imageManifestProblem(join(target, IMAGE_COPY), checked.map((tool) => tool.name));
+	const imageProblem = typeof checked === "string" ? checked : imageCheckProblem(join(target, IMAGE_COPY));
 	if (imageProblem !== undefined) {
 		throw new Error(
 			`refused: ${imageProblem}; the new copy is left unused at ${target}; current is unchanged.\n` +
