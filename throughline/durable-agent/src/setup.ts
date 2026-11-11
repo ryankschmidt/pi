@@ -39,8 +39,9 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 export { ModelRuntime, SettingsManager };
 
 /**
- * Harness settings read at every use from pi's settings. Automatic compaction stays off (the factory design keeps
- * it off and uses a manual compact); everything else follows pi's own settings file.
+ * Harness settings read at every use from pi's settings. Automatic compaction is on with Pi Durable's own defaults
+ * (Ryan, Nov 11, 2026: "It can be on now."): a context that nears its model's window is summarized and the run goes
+ * on, where it used to end in an overflow error. Everything else follows pi's own settings file.
  */
 export function harnessSettings(settings: SettingsManager): HarnessSettings {
 	return {
@@ -53,7 +54,7 @@ export function harnessSettings(settings: SettingsManager): HarnessSettings {
 				...(provider.maxRetries === undefined ? {} : { maxRetries: provider.maxRetries }),
 			};
 		},
-		compaction: { enabled: false },
+		compaction: { enabled: true },
 		get retry() {
 			return settings.getRetrySettings();
 		},
