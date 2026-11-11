@@ -74,7 +74,7 @@ async function checkAlternative(messagePath: string): Promise<void> {
   }
   const facts = {message, alternative: trailers[0], paths, tree: git('write-tree').trim(), diff: git('diff', '--cached', '--no-ext-diff', '--', 'throughline/durable-agent/')};
   const factsHash = sha(JSON.stringify(facts));
-  const { evaluate } = require('/Users/Admin/core-root/src/tools/throughline-ship/dist/jev-client.js') as {evaluate: Evaluate};
+  const { evaluate } = require('/Users/Admin/core-root/src/tools/ship-throughline/dist/jev-client.js') as {evaluate: Evaluate};
   const result = await evaluate(async (url, body) => {
     const response = await fetch(url, {method: 'POST', headers: {'content-type': 'application/json'}, body, signal: AbortSignal.timeout(600_000)});
     return {status: response.status, text: await response.text()};
