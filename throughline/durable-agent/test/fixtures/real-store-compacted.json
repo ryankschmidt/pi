@@ -1,0 +1,1973 @@
+[
+	{
+		"id": 8,
+		"kind": "pi.user",
+		"model": [
+			{
+				"role": "user",
+				"content": "w8x"
+			}
+		]
+	},
+	{
+		"id": 11,
+		"kind": "pi.system",
+		"model": [
+			{
+				"role": "system",
+				"content": "w11x"
+			}
+		]
+	},
+	{
+		"id": 12,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "w12x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c12",
+						"name": "read",
+						"arguments": {
+							"value": "w12x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c12",
+						"name": "read",
+						"arguments": {
+							"value": "w12x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c12",
+						"name": "read",
+						"arguments": {
+							"value": "w12x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c12",
+						"name": "read",
+						"arguments": {
+							"value": "w12x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 17,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c17",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w17x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 18,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c18",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w18x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 19,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c19",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w19x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 20,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c20",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w20x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 22,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w22x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c22",
+						"name": "write",
+						"arguments": {
+							"value": "w22x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 24,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "write",
+				"toolCallId": "c24",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w24x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 26,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "w26x"
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 27,
+		"kind": "pi.user",
+		"model": [
+			{
+				"role": "user",
+				"content": "w27x"
+			}
+		]
+	},
+	{
+		"id": 30,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w30x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c30",
+						"name": "read",
+						"arguments": {
+							"value": "w30x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 32,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c32",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w32x"
+					},
+					{
+						"type": "text",
+						"text": "w32x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w32x",
+					"message": "w32x"
+				}
+			]
+		}
+	},
+	{
+		"id": 34,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w34x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c34",
+						"name": "bash",
+						"arguments": {
+							"value": "w34x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 36,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "bash",
+				"toolCallId": "c36",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w36x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 38,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w38x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c38",
+						"name": "write",
+						"arguments": {
+							"value": "w38x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 40,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "write",
+				"toolCallId": "c40",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w40x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 42,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w42x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c42",
+						"name": "bash",
+						"arguments": {
+							"value": "w42x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 44,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "bash",
+				"toolCallId": "c44",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w44x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 46,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w46x"
+					},
+					{
+						"type": "text",
+						"text": "w46x"
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 47,
+		"kind": "pi.user",
+		"model": [
+			{
+				"role": "user",
+				"content": "w47x"
+			}
+		]
+	},
+	{
+		"id": 50,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w50x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c50",
+						"name": "read",
+						"arguments": {
+							"value": "w50x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c50",
+						"name": "read",
+						"arguments": {
+							"value": "w50x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c50",
+						"name": "read",
+						"arguments": {
+							"value": "w50x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c50",
+						"name": "read",
+						"arguments": {
+							"value": "w50x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c50",
+						"name": "read",
+						"arguments": {
+							"value": "w50x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c50",
+						"name": "read",
+						"arguments": {
+							"value": "w50x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 57,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c57",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w57x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 58,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c58",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w58x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 59,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c59",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w59x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 60,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c60",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w60x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 61,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c61",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w61x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 62,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c62",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w62x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 64,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w64x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c64",
+						"name": "bash",
+						"arguments": {
+							"value": "w64x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 66,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "bash",
+				"toolCallId": "c66",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w66x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 68,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w68x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c68",
+						"name": "bash",
+						"arguments": {
+							"value": "w68x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 70,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "bash",
+				"toolCallId": "c70",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w70x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 72,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "c72",
+						"name": "read",
+						"arguments": {
+							"value": "w72x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 74,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c74",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w74x"
+					},
+					{
+						"type": "text",
+						"text": "w74x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w74x",
+					"message": "w74x"
+				}
+			]
+		}
+	},
+	{
+		"id": 76,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w76x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c76",
+						"name": "edit",
+						"arguments": {
+							"value": "w76x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 78,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "edit",
+				"toolCallId": "c78",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w78x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 80,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w80x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c80",
+						"name": "bash",
+						"arguments": {
+							"value": "w80x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 82,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "bash",
+				"toolCallId": "c82",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w82x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 84,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w84x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c84",
+						"name": "bash",
+						"arguments": {
+							"value": "w84x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 86,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "bash",
+				"toolCallId": "c86",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w86x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 88,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "c88",
+						"name": "edit",
+						"arguments": {
+							"value": "w88x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 90,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "edit",
+				"toolCallId": "c90",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w90x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 92,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w92x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c92",
+						"name": "edit",
+						"arguments": {
+							"value": "w92x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 94,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "edit",
+				"toolCallId": "c94",
+				"isError": true,
+				"content": [
+					{
+						"type": "text",
+						"text": "w94x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w94x",
+					"code": "w94x",
+					"message": "w94x"
+				}
+			]
+		}
+	},
+	{
+		"id": 96,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"id": "c96",
+						"name": "edit",
+						"arguments": {
+							"value": "w96x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 98,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "edit",
+				"toolCallId": "c98",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w98x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 100,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "text",
+						"text": "w100x"
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 102,
+		"kind": "pi.compaction",
+		"head": 64,
+		"model": [
+			{
+				"role": "user",
+				"content": [
+					{
+						"type": "text",
+						"text": "w102x"
+					}
+				]
+			}
+		],
+		"data": {
+			"reason": "w102x"
+		}
+	},
+	{
+		"id": 104,
+		"kind": "pi.user",
+		"model": [
+			{
+				"role": "user",
+				"content": "w104x"
+			}
+		]
+	},
+	{
+		"id": 107,
+		"kind": "pi.system",
+		"model": [
+			{
+				"role": "system",
+				"content": "w107x"
+			}
+		]
+	},
+	{
+		"id": 108,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w108x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c108",
+						"name": "bash",
+						"arguments": {
+							"value": "w108x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 110,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "bash",
+				"toolCallId": "c110",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w110x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 112,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w112x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c112",
+						"name": "read",
+						"arguments": {
+							"value": "w112x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c112",
+						"name": "read",
+						"arguments": {
+							"value": "w112x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c112",
+						"name": "read",
+						"arguments": {
+							"value": "w112x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c112",
+						"name": "read",
+						"arguments": {
+							"value": "w112x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c112",
+						"name": "read",
+						"arguments": {
+							"value": "w112x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c112",
+						"name": "read",
+						"arguments": {
+							"value": "w112x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c112",
+						"name": "read",
+						"arguments": {
+							"value": "w112x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 120,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c120",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w120x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 121,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c121",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w121x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 122,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c122",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w122x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 123,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c123",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w123x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 124,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c124",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w124x"
+					},
+					{
+						"type": "text",
+						"text": "w124x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w124x",
+					"message": "w124x"
+				}
+			]
+		}
+	},
+	{
+		"id": 125,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c125",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w125x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 126,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c126",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w126x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 128,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w128x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c128",
+						"name": "read",
+						"arguments": {
+							"value": "w128x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c128",
+						"name": "read",
+						"arguments": {
+							"value": "w128x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c128",
+						"name": "read",
+						"arguments": {
+							"value": "w128x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c128",
+						"name": "read",
+						"arguments": {
+							"value": "w128x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c128",
+						"name": "read",
+						"arguments": {
+							"value": "w128x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c128",
+						"name": "read",
+						"arguments": {
+							"value": "w128x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 135,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c135",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w135x"
+					},
+					{
+						"type": "text",
+						"text": "w135x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w135x",
+					"message": "w135x"
+				}
+			]
+		}
+	},
+	{
+		"id": 136,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c136",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w136x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 137,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c137",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w137x"
+					},
+					{
+						"type": "text",
+						"text": "w137x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w137x",
+					"message": "w137x"
+				}
+			]
+		}
+	},
+	{
+		"id": 138,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c138",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w138x"
+					},
+					{
+						"type": "text",
+						"text": "w138x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w138x",
+					"message": "w138x"
+				}
+			]
+		}
+	},
+	{
+		"id": 139,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c139",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w139x"
+					},
+					{
+						"type": "text",
+						"text": "w139x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w139x",
+					"message": "w139x"
+				}
+			]
+		}
+	},
+	{
+		"id": 140,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c140",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w140x"
+					},
+					{
+						"type": "text",
+						"text": "w140x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w140x",
+					"message": "w140x"
+				}
+			]
+		}
+	},
+	{
+		"id": 142,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w142x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c142",
+						"name": "read",
+						"arguments": {
+							"value": "w142x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c142",
+						"name": "read",
+						"arguments": {
+							"value": "w142x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c142",
+						"name": "read",
+						"arguments": {
+							"value": "w142x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c142",
+						"name": "read",
+						"arguments": {
+							"value": "w142x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c142",
+						"name": "read",
+						"arguments": {
+							"value": "w142x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c142",
+						"name": "read",
+						"arguments": {
+							"value": "w142x"
+						}
+					},
+					{
+						"type": "toolCall",
+						"id": "c142",
+						"name": "read",
+						"arguments": {
+							"value": "w142x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 150,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c150",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w150x"
+					},
+					{
+						"type": "text",
+						"text": "w150x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w150x",
+					"message": "w150x"
+				}
+			]
+		}
+	},
+	{
+		"id": 151,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c151",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w151x"
+					},
+					{
+						"type": "text",
+						"text": "w151x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w151x",
+					"message": "w151x"
+				}
+			]
+		}
+	},
+	{
+		"id": 152,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c152",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w152x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 153,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c153",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w153x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 154,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c154",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w154x"
+					},
+					{
+						"type": "text",
+						"text": "w154x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w154x",
+					"message": "w154x"
+				}
+			]
+		}
+	},
+	{
+		"id": 155,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c155",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w155x"
+					},
+					{
+						"type": "text",
+						"text": "w155x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": [
+				{
+					"severity": "w155x",
+					"message": "w155x"
+				}
+			]
+		}
+	},
+	{
+		"id": 156,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "read",
+				"toolCallId": "c156",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w156x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 158,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w158x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c158",
+						"name": "edit",
+						"arguments": {
+							"value": "w158x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 160,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "edit",
+				"toolCallId": "c160",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w160x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 162,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w162x"
+					},
+					{
+						"type": "toolCall",
+						"id": "c162",
+						"name": "bash",
+						"arguments": {
+							"value": "w162x"
+						}
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 164,
+		"kind": "pi.tool-result",
+		"model": [
+			{
+				"role": "toolResult",
+				"toolName": "bash",
+				"toolCallId": "c164",
+				"isError": false,
+				"content": [
+					{
+						"type": "text",
+						"text": "w164x"
+					}
+				]
+			}
+		],
+		"data": {
+			"diagnostics": []
+		}
+	},
+	{
+		"id": 166,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w166x"
+					},
+					{
+						"type": "text",
+						"text": "w166x"
+					}
+				]
+			}
+		]
+	},
+	{
+		"id": 167,
+		"kind": "pi.user",
+		"model": [
+			{
+				"role": "user",
+				"content": "w167x"
+			}
+		]
+	},
+	{
+		"id": 170,
+		"kind": "pi.assistant",
+		"model": [
+			{
+				"role": "assistant",
+				"content": [
+					{
+						"type": "thinking",
+						"thinking": "w170x"
+					},
+					{
+						"type": "text",
+						"text": "w170x"
+					}
+				]
+			}
+		]
+	}
+]

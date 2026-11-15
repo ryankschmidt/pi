@@ -2058,7 +2058,8 @@
           "throughline/durable-agent/test/rewind.test.ts",
           "throughline/durable-agent/src/history.ts",
           "throughline/durable-agent/src/history-tool.ts",
-          "throughline/durable-agent/test/history.test.ts"
+          "throughline/durable-agent/test/history.test.ts",
+          "throughline/durable-agent/test/fixtures/real-store-compacted.json"
         ]
       }
     ]

@@ -559,5 +559,24 @@ test("past pi's compaction threshold the agent compacts, keeps answering, and se
 	const page = JSON.parse(text(result.content)) as { results: { context: string; text: string }[] };
 	const hit = page.results.find((entry) => entry.text.includes(MARKER));
 	assert.equal(hit?.context, "compacted", text(result.content));
-	await stop(program);
+
+	// The compaction lives in the store, not the process: a restarted program still sends the summary, not the note,
+	// and search_history still reaches the note as compacted.
+	program.kill();
+	await program.exited;
+	const sent = model.bodies.length;
+	const second = setup.start();
+	await second.hello;
+	assert.equal(await turn(second, "SEARCH-NOW once more.", "c3"), "done", second.stderr());
+	const later = model.bodies.slice(sent);
+	const askedAgain = later.find((body) => body.tools?.length && text(body.messages.at(-1)?.content).includes("SEARCH-NOW once more"));
+	assert.ok(askedAgain !== undefined, "the restarted program's turn reached the model");
+	// The search call and its result after the compaction quote the marker; the user's original note must not come back.
+	assert.ok(!askedAgain.messages.some((message) => message.role === "user" && text(message.content).includes(`Remember this note: ${MARKER}`)), "after the restart the model still sees the summary, not the note");
+	const again = later.map((body) => body.messages.at(-1)).find((message) => message?.role === "tool");
+	assert.ok(again !== undefined, "search_history answered after the restart");
+	const hitAgain = (JSON.parse(text(again.content)) as { results: { context: string; text: string }[] }).results.find((entry) => entry.text.includes(MARKER));
+	assert.equal(hitAgain?.context, "compacted", text(again.content));
+	assert.equal((await storedEntries(second)).filter((entry) => entry.kind === "pi.compaction").length >= 1, true, "the compaction entry survives the restart");
+	await stop(second);
 });
