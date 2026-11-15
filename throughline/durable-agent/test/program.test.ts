@@ -12,6 +12,8 @@ import { ENGINE, PROTOCOL_VERSION } from "../src/protocol.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/faux-program.ts", import.meta.url));
 const toolsFixture = fileURLToPath(new URL("./fixtures/faux-tools-program.ts", import.meta.url));
+const approvalsFixture = fileURLToPath(new URL("./fixtures/faux-approvals-program.ts", import.meta.url));
+const TASK_STATUS = { name: "task_status", description: "Read one delegated task.", inputSchema: { type: "object" }, readOnly: true };
 const bashFixture = fileURLToPath(new URL("./fixtures/faux-bash-program.ts", import.meta.url));
 const roots: string[] = [];
 const started: AgentProgram[] = [];
@@ -132,6 +134,7 @@ test("a ThroughLine tool call leaves on the link with the stock tool name and it
 		program.answerTool(call.id, { content: [{ type: "text", text: "task-1 is completed" }] });
 	});
 	await program.hello;
+	await program.call("configure", { conversationId: await program.root(), tools: [TASK_STATUS] });
 	const { submissionId } = (await program.call("submit", { conversationId: await program.root(), content: "check", requestId: "t1" })) as {
 		submissionId: number;
 	};
@@ -376,6 +379,164 @@ test("submit returns the placed user entry, equal to its settled record's; a for
 	await restarted.call("drain");
 	await restarted.exited;
 	assert.equal(conversationCount(store), 2);
+});
+
+// Tools-approvals design (Design-Chosen-tools-approvals.json, tests a-f): an approval waiting when the program stops is
+// the tool task's own state. A close or a signal puts the call back to pending without counting a restart, the next
+// program asks again with the same key, and the decision is stored with the call before the client hears it matched.
+const startApprovals = (store: string, cwd: string, gate?: "gate") => {
+	const program = startProgram(process.execPath, [approvalsFixture, store, cwd, ...(gate === undefined ? [] : [gate])]);
+	started.push(program);
+	return program;
+};
+const nextQuestion = (program: AgentProgram) =>
+	new Promise<{ key: string; tool: string }>((resolve) => program.onQuestion((question) => resolve(question)));
+async function submitOnly(program: AgentProgram, content: string, requestId: string): Promise<number> {
+	const placed = (await program.call("submit", { conversationId: await program.root(), content, requestId })) as { submissionId: number };
+	return placed.submissionId;
+}
+const witnessLines = async (cwd: string) =>
+	existsSync(join(cwd, "witness.txt")) ? (await readFile(join(cwd, "witness.txt"), "utf8")).split("\n").filter(Boolean) : [];
+/** The store's tool tasks, read after the program stopped. */
+function toolTasks(store: string): { status: string; restarts: number }[] {
+	const db = new DatabaseSync(join(store, "store.sqlite"), { readOnly: true });
+	try {
+		const rows = db.prepare("select status, record from tasks where kind = 'pi.tool' order by id").all() as { status: string; record: string }[];
+		return rows.map((row) => ({ status: row.status, restarts: (JSON.parse(row.record) as { restarts?: number }).restarts ?? 0 }));
+	} finally {
+		db.close();
+	}
+}
+
+test("(a) closing the input while an approval waits stops the program at once; the call stays pending, is asked again with the same key, and runs once on accept", async () => {
+	const { store, cwd } = await fresh();
+	const first = startApprovals(store, cwd);
+	const asked = nextQuestion(first);
+	await first.hello;
+	const submissionId = await submitOnly(first, "bash call-a: echo once >> witness.txt", "a");
+	assert.equal((await asked).key, "call-a");
+	first.child.stdin?.end();
+	assert.equal(await first.exited, 0, first.stderr());
+	assert.deepEqual(toolTasks(store), [{ status: "pending", restarts: 0 }], "a close puts the call back without a restart");
+	const second = startApprovals(store, cwd);
+	const again = nextQuestion(second);
+	await second.hello;
+	assert.equal((await again).key, "call-a", "the same question, under the same key");
+	assert.deepEqual(await second.call("answer", { key: "call-a", answer: "accept" }), { matched: true });
+	assert.equal(((await second.call("wait", { submissionId })) as { status: string }).status, "done");
+	assert.deepEqual(await witnessLines(cwd), ["once"]);
+	await second.call("drain");
+	await second.exited;
+});
+
+test("(b) a SIGTERM is a close: six in a row (past the restart limit) count no restart, and accept then runs the tool once", async () => {
+	const { store, cwd } = await fresh();
+	let submissionId = 0;
+	for (let cycle = 0; cycle < 6; cycle++) {
+		const program = startApprovals(store, cwd);
+		const asked = nextQuestion(program);
+		await program.hello;
+		if (cycle === 0) submissionId = await submitOnly(program, "bash call-b: echo once >> witness.txt", "b");
+		assert.equal((await asked).key, "call-b");
+		program.child.kill("SIGTERM");
+		assert.equal(await program.exited, 0, program.stderr());
+		assert.deepEqual(toolTasks(store), [{ status: "pending", restarts: 0 }], `cycle ${cycle}`);
+	}
+	const last = startApprovals(store, cwd);
+	const asked = nextQuestion(last);
+	await last.hello;
+	await asked;
+	assert.deepEqual(await last.call("answer", { key: "call-b", answer: "accept" }), { matched: true });
+	assert.equal(((await last.call("wait", { submissionId })) as { status: string }).status, "done");
+	assert.deepEqual(await witnessLines(cwd), ["once"]);
+	await last.call("drain");
+	await last.exited;
+});
+
+test("(c) aborting the run while an approval waits ends it and the tool never runs", async () => {
+	const { store, cwd } = await fresh();
+	const program = startApprovals(store, cwd);
+	const asked = nextQuestion(program);
+	await program.hello;
+	const submissionId = await submitOnly(program, "bash call-c: echo once >> witness.txt", "c");
+	await asked;
+	await program.call("abort", { conversationId: await program.root() });
+	await program.call("wait", { submissionId });
+	assert.deepEqual(await witnessLines(cwd), []);
+	assert.deepEqual(await program.call("answer", { key: "call-c", answer: "accept" }), { matched: false }, "nothing asks any more");
+	await program.call("drain");
+	await program.exited;
+	assert.deepEqual(toolTasks(store).map((task) => task.status), ["terminal"]);
+});
+
+test("(d) a decision stored before a crash is kept: the restarted program does not ask again and the tool runs once", async () => {
+	const { store, cwd } = await fresh();
+	const first = startApprovals(store, cwd, "gate");
+	const asked = nextQuestion(first);
+	await first.hello;
+	const submissionId = await submitOnly(first, "bash call-d: echo once >> witness.txt", "d");
+	await asked;
+	assert.deepEqual(await first.call("answer", { key: "call-d", answer: "accept" }), { matched: true });
+	// matched is sent after the memo commit; the gate hook, which runs after the approvals hook, marks that the call
+	// passed it and holds the call there until the kill.
+	while (!existsSync(join(cwd, "gate-reached"))) await new Promise((resolve) => setTimeout(resolve, 20));
+	first.kill();
+	await first.exited;
+	const second = startApprovals(store, cwd);
+	const questions: string[] = [];
+	second.onQuestion((question) => questions.push(question.key));
+	await second.hello;
+	assert.equal(((await second.call("wait", { submissionId })) as { status: string }).status, "done");
+	assert.deepEqual(questions, [], "a stored decision is never asked again");
+	assert.deepEqual(await witnessLines(cwd), ["once"]);
+	await second.call("drain");
+	await second.exited;
+});
+
+test("(e) an answer given before its question is not kept: it does not match, and the question is still asked", async () => {
+	const { store, cwd } = await fresh();
+	const program = startApprovals(store, cwd);
+	const asked = nextQuestion(program);
+	await program.hello;
+	assert.deepEqual(await program.call("answer", { key: "call-e", answer: "accept" }), { matched: false });
+	const submissionId = await submitOnly(program, "bash call-e: echo once >> witness.txt", "e");
+	assert.equal((await asked).key, "call-e");
+	assert.deepEqual(await program.call("answer", { key: "call-e", answer: "decline" }), { matched: true });
+	await program.call("wait", { submissionId });
+	assert.deepEqual(await witnessLines(cwd), [], "the declined call never ran");
+	await program.call("drain");
+	await program.exited;
+});
+
+test("(f) ThroughLine's tools come by configure and are stored: a program closed while a ThroughLine call waits resolves it again after a restart with no configure", async () => {
+	const { store, cwd } = await fresh();
+	const first = startApprovals(store, cwd);
+	const asked = nextQuestion(first);
+	await first.hello;
+	await first.call("configure", { conversationId: await first.root(), tools: [{ ...TASK_STATUS, readOnly: false }] });
+	await assert.rejects(first.call("configure", { conversationId: await first.root(), tools: [{ description: "no name" }] }), /TOOLS_INVALID/);
+	const submissionId = await submitOnly(first, "tool: task_status", "f");
+	const question = await asked;
+	assert.equal(question.tool, "throughline__task_status");
+	first.child.stdin?.end();
+	assert.equal(await first.exited, 0, first.stderr());
+	const second = startApprovals(store, cwd);
+	const again = nextQuestion(second);
+	const calls: string[] = [];
+	second.onToolCall((call) => {
+		calls.push(call.name);
+		second.answerTool(call.id, { content: [{ type: "text", text: "task-1 is completed" }] });
+	});
+	await second.hello;
+	assert.equal((await again).key, question.key, "the stored list resolves the call before any configure");
+	assert.deepEqual(await second.call("answer", { key: question.key, answer: "accept" }), { matched: true });
+	assert.equal(((await second.call("wait", { submissionId })) as { status: string }).status, "done");
+	assert.deepEqual(calls, ["task_status"]);
+	const stored = JSON.stringify(await storedEntries(second));
+	assert.match(stored, /task-1 is completed/);
+	assert.doesNotMatch(stored, /tool_unavailable/);
+	await second.call("drain");
+	await second.exited;
 });
 
 /** How many conversations the store holds, read after the program stopped. */

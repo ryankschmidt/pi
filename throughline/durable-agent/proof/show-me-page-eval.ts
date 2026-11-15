@@ -56,7 +56,6 @@ function layout() {
 	while (!existsSync(join(up, "node_modules/@earendil-works/pi-durable"))) up = dirname(up);
 	symlinkSync(join(up, "node_modules"), join(root, "node_modules"));
 	mkdirSync(join(root, "work"));
-	writeFileSync(join(root, "tools.json"), JSON.stringify([HTML_RENDER]));
 	return { programDir, root, showMe: realpathSync(showMe) };
 }
 
@@ -74,7 +73,7 @@ async function run(model: string, index: number, rewound: boolean) {
 	const { programDir, root, showMe } = layout();
 	const program = startProgram(
 		process.execPath,
-		[join(programDir, "src/main.ts"), "--store", join(root, "store"), "--agent", "eval", "--cwd", join(root, "work"), "--model", model, "--runtime-mode", "full-access", "--tools", join(root, "tools.json")],
+		[join(programDir, "src/main.ts"), "--store", join(root, "store"), "--agent", "eval", "--cwd", join(root, "work"), "--model", model, "--runtime-mode", "full-access"],
 		{},
 	);
 	const renders: { html: string; title?: string }[] = [];
@@ -95,6 +94,8 @@ async function run(model: string, index: number, rewound: boolean) {
 	let commandFrom = 0;
 	try {
 		await within(program.hello, 60_000, "no hello");
+		// ThroughLine's tool list arrives in configure, as ThroughLine sends it.
+		await program.call("configure", { conversationId: await shown(program), tools: [HTML_RENDER] });
 		await turn(program, CONTEXT, "context", 5 * 60_000);
 		if (rewound) {
 			await turn(program, WITHDRAWN, "withdrawn", 5 * 60_000);
