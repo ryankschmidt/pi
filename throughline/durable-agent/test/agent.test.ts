@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { zstdDecompressSync } from "node:zlib";
 import { getDocsPath } from "@earendil-works/pi-coding-agent";
 import { SHIPPED_IMAGE_MODULE, SHIPPED_SHOW_ME } from "../install/runtime.ts";
 import { type AgentProgram, startProgram } from "../src/client.ts";
@@ -96,10 +97,10 @@ async function modelEndpoint(replies: Reply[] | ((body: RequestBody) => Reply)) 
 	return { bodies, port: (server.address() as AddressInfo).port };
 }
 
-type AnthropicBody = { model: string; system?: { text: string }[]; messages: unknown[] };
+type AnthropicBody = { model: string; system?: { text: string }[]; messages: { role: string; content: unknown }[]; tools?: { name: string }[] };
 
-/** A local Anthropic Messages endpoint: answers every request with `text` and records bodies. */
-async function anthropicEndpoint(text: string) {
+/** A local Anthropic Messages endpoint: answers every request with `reply`, or with what `reply` returns for the body, and records bodies. */
+async function anthropicEndpoint(reply: string | ((body: AnthropicBody) => Reply)) {
 	const bodies: AnthropicBody[] = [];
 	const server = createServer((req, res) => {
 		if (req.method !== "POST") {
@@ -113,13 +114,19 @@ async function anthropicEndpoint(text: string) {
 		req.on("end", () => {
 			const body = JSON.parse(raw) as AnthropicBody;
 			bodies.push(body);
+			const answer: Reply = typeof reply === "string" ? { text: reply } : reply(body);
 			const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
 			res.writeHead(200, { "content-type": "text/event-stream" });
 			res.write(event("message_start", { message: { id: `msg_${bodies.length}`, type: "message", role: "assistant", model: body.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 0 } } }));
-			res.write(event("content_block_start", { index: 0, content_block: { type: "text", text: "" } }));
-			res.write(event("content_block_delta", { index: 0, delta: { type: "text_delta", text } }));
+			if ("text" in answer) {
+				res.write(event("content_block_start", { index: 0, content_block: { type: "text", text: "" } }));
+				res.write(event("content_block_delta", { index: 0, delta: { type: "text_delta", text: answer.text } }));
+			} else {
+				res.write(event("content_block_start", { index: 0, content_block: { type: "tool_use", id: `toolu_${bodies.length}`, name: answer.tool, input: {} } }));
+				res.write(event("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(answer.args) } }));
+			}
 			res.write(event("content_block_stop", { index: 0 }));
-			res.write(event("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 2 } }));
+			res.write(event("message_delta", { delta: { stop_reason: "text" in answer ? "end_turn" : "tool_use", stop_sequence: null }, usage: { output_tokens: 2 } }));
 			res.end(event("message_stop", {}));
 		});
 	});
@@ -127,6 +134,47 @@ async function anthropicEndpoint(text: string) {
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	return { bodies, port: (server.address() as AddressInfo).port };
 }
+
+type CodexBody = { model: string; input: { type?: string; role?: string; content?: unknown; output?: unknown }[]; tools?: { name: string }[] };
+
+/**
+ * A local Codex Responses endpoint, as Pi's openai-codex-responses API reaches ChatGPT's Codex backend. It refuses the
+ * WebSocket upgrade, so the client falls back to its SSE transport; it reads the zstd body, answers with what `reply`
+ * returns for it, and records bodies.
+ */
+async function codexEndpoint(reply: (body: CodexBody) => Reply) {
+	const bodies: CodexBody[] = [];
+	const server = createServer((req, res) => {
+		if (req.method !== "POST" || !req.url?.endsWith("/codex/responses")) {
+			res.writeHead(404).end();
+			return;
+		}
+		const chunks: Buffer[] = [];
+		req.on("data", (chunk: Buffer) => chunks.push(chunk));
+		req.on("end", () => {
+			const raw = Buffer.concat(chunks);
+			const body = JSON.parse((req.headers["content-encoding"] === "zstd" ? zstdDecompressSync(raw) : raw).toString("utf8")) as CodexBody;
+			bodies.push(body);
+			const answer = reply(body);
+			const n = bodies.length;
+			const item =
+				"text" in answer
+					? { type: "message", id: `msg_${n}`, role: "assistant", status: "completed", content: [{ type: "output_text", text: answer.text }] }
+					: { type: "function_call", id: `fc_${n}`, call_id: `call_${n}`, name: answer.tool, arguments: JSON.stringify(answer.args), status: "completed" };
+			const data = (event: object) => `data: ${JSON.stringify(event)}\n\n`;
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			res.write(data({ type: "response.output_item.added", output_index: 0, item: "content" in item ? { ...item, status: "in_progress", content: [] } : { ...item, status: "in_progress", arguments: "" } }));
+			res.write(data({ type: "response.output_item.done", output_index: 0, item }));
+			res.end(data({ type: "response.completed", response: { status: "completed", usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12, input_tokens_details: { cached_tokens: 0 } } } }));
+		});
+	});
+	servers.push(server);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	return { bodies, port: (server.address() as AddressInfo).port };
+}
+
+/** An access token shaped like ChatGPT's, from which the Codex API reads the account id. It is not a credential. */
+const CODEX_TEST_TOKEN = `aaa.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acc_test" } })).toString("base64")}.bbb`;
 
 const anthropicSystem = (body: AnthropicBody | undefined) => (body?.system ?? []).map((block) => block.text).join("\n");
 
@@ -583,10 +631,18 @@ test("past pi's compaction threshold the agent compacts, keeps answering, and se
 
 // The case above runs on an OpenAI-completions endpoint. ThroughLine's main agent is Claude, on Anthropic Messages, where
 // the standard prompt is a section rendered first: the compaction summary is written over the same API, and the turn
-// after it still carries the standard prompt first and the summary in place of the earlier note.
-test("on a Claude model past the threshold the agent compacts over Anthropic Messages, keeps answering, and keeps the standard prompt first", { timeout: 90_000 }, async () => {
+// after it still carries the standard prompt first and the summary in place of the earlier note, and search_history
+// reaches the note over Anthropic's tool_use and tool_result blocks.
+test("on a Claude model past the threshold the agent compacts over Anthropic Messages, keeps answering, keeps the standard prompt first, and search_history reaches the note", { timeout: 90_000 }, async () => {
 	const MARKER = "PRECOMPACT-CLAUDE-5b9a";
-	const model = await anthropicEndpoint("Summary: the user left a note earlier.");
+	const isToolResult = (content: unknown) => Array.isArray(content) && content.some((block: { type?: string }) => block.type === "tool_result");
+	const model = await anthropicEndpoint((body) => {
+		const last = body.messages.at(-1);
+		if (isToolResult(last?.content)) return { text: "found the note" };
+		// The summary request offers no tools; the agent's own turn does.
+		if (body.tools?.length && JSON.stringify(last?.content).includes("AFTER-COMPACT")) return { tool: "search_history", args: { query: MARKER } };
+		return { text: "Summary: the user left a note earlier." };
+	});
 	const setup = layout(model.port, { images: "none", claudeModel: true });
 	writeFileSync(
 		join(setup.root, "pi-agent/models.json"),
@@ -604,10 +660,61 @@ test("on a Claude model past the threshold the agent compacts over Anthropic Mes
 	assert.ok(stored.some((entry) => entry.kind === "pi.compaction"), `the store holds a compaction entry: ${stored.map((entry) => entry.kind).join(", ")}`);
 	assert.ok(stored.some((entry) => entry.kind === "pi.user" && JSON.stringify(entry.model?.[0]?.content).includes(MARKER)), "the entry from before the compaction is still stored");
 	const later = model.bodies.slice(before);
-	assert.ok(later.length >= 2, `a summary request and the turn's own request both went over Anthropic Messages (${later.length})`);
-	const asked = later.at(-1) as AnthropicBody;
-	assert.ok(JSON.stringify(asked.messages).includes("AFTER-COMPACT"), "the turn after the compaction reached the model");
+	assert.ok(later.length >= 3, `a summary request, the turn's own request and the request after search_history all went over Anthropic Messages (${later.length})`);
+	const asked = later.find((body) => body.tools?.length && JSON.stringify(body.messages.at(-1)?.content).includes("AFTER-COMPACT"));
+	assert.ok(asked !== undefined, "the turn after the compaction reached the model");
 	assert.ok(!JSON.stringify(asked.messages).includes(`Remember this note: ${MARKER}`), "after the compaction the model sees the summary, not the note");
 	assert.ok(anthropicSystem(asked).startsWith(RECORD_TEXT), "the standard prompt still comes first after the compaction");
+	assert.ok(asked.tools?.some((tool) => tool.name === "search_history"), "search_history is offered to the Claude model");
+	const answered = later.find((body) => isToolResult(body.messages.at(-1)?.content));
+	assert.ok(answered !== undefined, "search_history answered without an approval question");
+	const resultText = JSON.stringify(answered.messages.at(-1)?.content);
+	assert.ok(resultText.includes(MARKER) && resultText.includes("compacted"), `search_history quotes the note as compacted: ${resultText.slice(0, 400)}`);
+	// With the threshold this low, a background compaction may follow the turn; that summary request has its own prompt.
+	assert.ok(anthropicSystem(answered).startsWith(RECORD_TEXT), "the standard prompt still comes first on the request carrying the tool result");
+	await stop(program);
+});
+
+// ThroughLine's Codex models reach ChatGPT's Codex backend through Pi's openai-codex-responses API, whose transport and
+// request shape (instructions plus input items, function_call and function_call_output) differ from both cases above.
+// The same compaction runs there: the summary is written over that API, the turn goes on, and search_history reaches
+// the note from before the summary.
+test("on a Codex model past the threshold the agent compacts over the Codex Responses API, keeps answering, and search_history reaches the note", { timeout: 90_000 }, async () => {
+	const MARKER = "PRECOMPACT-CODEX-3e8f";
+	const lastItem = (body: CodexBody) => body.input.at(-1);
+	const model = await codexEndpoint((body) => {
+		const last = lastItem(body);
+		if (last?.type === "function_call_output") return { text: "found the note" };
+		// The summary request offers no tools; the agent's own turn does.
+		if (body.tools?.length && JSON.stringify(last?.content).includes("CODEX-AFTER")) return { tool: "search_history", args: { query: MARKER } };
+		return { text: "Summary: the user left a note earlier." };
+	});
+	const setup = layout(model.port, { images: "none" });
+	writeFileSync(
+		join(setup.root, "pi-agent/models.json"),
+		JSON.stringify({ providers: { local: { baseUrl: `http://127.0.0.1:${model.port}`, api: "openai-codex-responses", apiKey: CODEX_TEST_TOKEN, models: [{ id: "echo", contextWindow: 128_000 }] } } }),
+	);
+	mkdirSync(join(setup.cwd, ".pi"));
+	writeFileSync(join(setup.cwd, ".pi/settings.json"), JSON.stringify({ compaction: { keepRecentTokens: 2_000, modelOverrides: { "local/echo": { reserveTokens: 118_000 } } } }));
+	const program = setup.start();
+	await program.hello;
+	assert.equal(await turn(program, `Remember this note: ${MARKER}.`, "x1"), "done", program.stderr());
+	const before = model.bodies.length;
+	assert.ok(before >= 1, "the first turn reached the Codex endpoint");
+	assert.equal(await turn(program, `CODEX-AFTER ${"filler words that grow the context ".repeat(1_400)}`, "x2"), "done", program.stderr());
+
+	const stored = await storedEntries(program);
+	assert.ok(stored.some((entry) => entry.kind === "pi.compaction"), `the store holds a compaction entry: ${stored.map((entry) => entry.kind).join(", ")}`);
+	assert.ok(stored.some((entry) => entry.kind === "pi.user" && JSON.stringify(entry.model?.[0]?.content).includes(MARKER)), "the entry from before the compaction is still stored");
+	const later = model.bodies.slice(before);
+	assert.ok(later.some((body) => !body.tools?.length), "the compaction summary was written over the Codex Responses API");
+	const asked = later.find((body) => body.tools?.length && JSON.stringify(lastItem(body)?.content).includes("CODEX-AFTER"));
+	assert.ok(asked !== undefined, "the turn after the compaction reached the model");
+	assert.ok(!JSON.stringify(asked.input).includes(`Remember this note: ${MARKER}`), "after the compaction the model sees the summary, not the note");
+	assert.ok(asked.tools?.some((tool) => tool.name === "search_history"), "search_history is offered to the Codex model");
+	const result = later.map(lastItem).find((item) => item?.type === "function_call_output");
+	assert.ok(result !== undefined, "search_history answered without an approval question");
+	const resultText = JSON.stringify(result.output);
+	assert.ok(resultText.includes(MARKER) && resultText.includes("compacted"), `search_history quotes the note as compacted: ${resultText.slice(0, 400)}`);
 	await stop(program);
 });
