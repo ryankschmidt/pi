@@ -88,7 +88,8 @@ export type ProgramOptions = {
 	onExit?: (code: number) => void;
 };
 
-export const EXIT = { ok: 0, failed: 1, alreadyOwned: 3, protocol: 4 } as const;
+// promptUnavailable is set by main.ts before runProgram: Claude Code's standard prompt could not be resolved.
+export const EXIT = { ok: 0, failed: 1, alreadyOwned: 3, protocol: 4, promptUnavailable: 5 } as const;
 
 export async function runProgram(options: ProgramOptions): Promise<number> {
 	const context: Context = BACKGROUND_CONTEXT;

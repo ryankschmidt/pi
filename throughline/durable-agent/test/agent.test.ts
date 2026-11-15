@@ -2,21 +2,46 @@
 // request: what reaches the model is what these tests check. The program runs from a copy laid out as the installer
 // lays it out (throughline/durable-agent with capabilities/ beside src/, node_modules at the root), so the pinned image
 // module and the pinned show-me skill are found where an install puts them. Pi's settings are shaped like Ryan's: they
-// list no show-me skill.
+// list no show-me skill. Each program runs with a temporary HOME holding an FCCL config that pins a fake Claude Code and
+// a cached standard prompt for it, so Claude Code's standard prompt resolves at start without Ryan's live cache.
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+	chmodSync,
+	cpSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { getDocsPath } from "@earendil-works/pi-coding-agent";
 import { SHIPPED_IMAGE_MODULE, SHIPPED_SHOW_ME } from "../install/runtime.ts";
 import { type AgentProgram, startProgram } from "../src/client.ts";
+import { EXIT } from "../src/program.ts";
 
 const AGENT_DIR = fileURLToPath(new URL("..", import.meta.url));
 const APPEND_MARKER = "APPEND-MARKER-7f3c: operator bootstrap for this test";
+const CLAUDE_VERSION = "9.9.9-fake";
+// Standard prompts over the 1,000-character floor: the cached one, the one the fake Claude Code captures, and a capture
+// that names the capture's temporary folder, as Claude Code's auto memory section did. The capture trims what it
+// keeps, so the captured text carries no trailing space.
+const RECORD_TEXT = `CACHED-STANDARD-PROMPT-4e1a\n${"You are an interactive agent that helps users with software engineering tasks. ".repeat(16)}`;
+const CAPTURED_TEXT = `CAPTURED-STANDARD-PROMPT-9b2c\n${"Use the tools available to you to assist the user. ".repeat(24)}`.trimEnd();
+const LEAKY_TEXT = `${CAPTURED_TEXT}\n# Memory\nKeep memory in /var/folders/x/T/pi-claude-standard-prompt-a1b2c3/projects/memory/.`;
+const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+const promptRecord = (claudeBin: string, text: string) =>
+	JSON.stringify({ claude_bin: claudeBin, claude_version: CLAUDE_VERSION, text, sha256: sha(text), first_line: text.split("\n")[0], captured_at: "2026-11-15T10:00:00.000Z" });
 // A 1x1 PNG.
 const PIXEL = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const roots: string[] = [];
@@ -67,6 +92,40 @@ async function modelEndpoint(replies: Reply[]) {
 	return { bodies, port: (server.address() as AddressInfo).port };
 }
 
+type AnthropicBody = { model: string; system?: { text: string }[]; messages: unknown[] };
+
+/** A local Anthropic Messages endpoint: answers every request with `text` and records bodies. */
+async function anthropicEndpoint(text: string) {
+	const bodies: AnthropicBody[] = [];
+	const server = createServer((req, res) => {
+		if (req.method !== "POST") {
+			res.writeHead(404).end();
+			return;
+		}
+		let raw = "";
+		req.on("data", (chunk) => {
+			raw += chunk;
+		});
+		req.on("end", () => {
+			const body = JSON.parse(raw) as AnthropicBody;
+			bodies.push(body);
+			const event = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			res.write(event("message_start", { message: { id: `msg_${bodies.length}`, type: "message", role: "assistant", model: body.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 0 } } }));
+			res.write(event("content_block_start", { index: 0, content_block: { type: "text", text: "" } }));
+			res.write(event("content_block_delta", { index: 0, delta: { type: "text_delta", text } }));
+			res.write(event("content_block_stop", { index: 0 }));
+			res.write(event("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 2 } }));
+			res.end(event("message_stop", {}));
+		});
+	});
+	servers.push(server);
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	return { bodies, port: (server.address() as AddressInfo).port };
+}
+
+const anthropicSystem = (body: AnthropicBody | undefined) => (body?.system ?? []).map((block) => block.text).join("\n");
+
 /** A loadable image module copy declaring `tools`, each with an object schema unless `schemas` overrides it. */
 function imageCopy(tools: string[], schemas: Record<string, object> = {}): { shared: string; effects: string } {
 	const descriptions = Object.fromEntries(tools.map((name) => [name, `The ${name} tool`]));
@@ -80,8 +139,30 @@ function imageCopy(tools: string[], schemas: Record<string, object> = {}): { sha
 /** What the image module copy holds: the shipped module, nothing, or a copy that loads but is broken in one way. */
 type Images = "shipped" | "none" | { shared: string; effects: string };
 
+/**
+ * A temporary HOME as the program reads it: the FCCL config pinning a fake Claude Code, the text that fake sends, and
+ * a valid cached standard prompt for it. `pinClaude` points the config at another binary.
+ */
+function claudeHome(root: string) {
+	const home = join(root, "home");
+	const claudeBin = join(home, ".local/share/claude/versions", CLAUDE_VERSION);
+	mkdirSync(dirname(claudeBin), { recursive: true });
+	writeFileSync(claudeBin, `#!/bin/sh\nexec '${process.execPath}' '${join(AGENT_DIR, "test/fixtures/fake-claude-code.ts")}' "$@"\n`);
+	chmodSync(claudeBin, 0o755);
+	writeFileSync(join(home, "fake-claude-system.txt"), CAPTURED_TEXT);
+	const config = join(home, ".local/state/ryan/fccl/static-shim-config.json");
+	mkdirSync(dirname(config), { recursive: true });
+	const pinClaude = (bin: string) => writeFileSync(config, JSON.stringify({ real_targets: { claude: bin } }));
+	pinClaude(claudeBin);
+	const stateDir = join(home, ".local/state/pi-claude-standard-prompt");
+	const recordPath = join(stateDir, `standard-prompt-${CLAUDE_VERSION}.json`);
+	mkdirSync(stateDir, { recursive: true });
+	writeFileSync(recordPath, promptRecord(claudeBin, RECORD_TEXT));
+	return { home, claudeBin, stateDir, recordPath, pinClaude, captures: (text: string) => writeFileSync(join(home, "fake-claude-system.txt"), text) };
+}
+
 /** The program copied as an install lays it out, a pi agent folder pointing at the endpoint, and a working folder. */
-function layout(port: number, options: { images: Images; sameNamedShowMe?: boolean }) {
+function layout(port: number, options: { images: Images; sameNamedShowMe?: boolean; claudeModel?: boolean }) {
 	const root = mkdtempSync(join(tmpdir(), "durable-agent-real-"));
 	roots.push(root);
 	const programDir = join(root, "throughline/durable-agent");
@@ -111,10 +192,12 @@ function layout(port: number, options: { images: Images; sameNamedShowMe?: boole
 
 	const agentDir = join(root, "pi-agent");
 	mkdirSync(agentDir);
-	writeFileSync(
-		join(agentDir, "models.json"),
-		JSON.stringify({ providers: { local: { baseUrl: `http://127.0.0.1:${port}/v1`, api: "openai-completions", apiKey: "local", models: [{ id: "echo" }] } } }),
-	);
+	// The endpoint speaks one API: OpenAI's by default, Anthropic Messages (as Pi's own Anthropic provider does) for Claude.
+	const provider = options.claudeModel
+		? { "claude-local": { baseUrl: `http://127.0.0.1:${port}`, api: "anthropic-messages", apiKey: "local", models: [{ id: "claude-test" }] } }
+		: { local: { baseUrl: `http://127.0.0.1:${port}/v1`, api: "openai-completions", apiKey: "local", models: [{ id: "echo" }] } };
+	writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: provider }));
+	const claude = claudeHome(root);
 	// Shaped like Ryan's settings: a skills list without show-me.
 	const other = join(agentDir, "skills-elsewhere/other/SKILL.md");
 	mkdirSync(dirname(other), { recursive: true });
@@ -142,13 +225,13 @@ function layout(port: number, options: { images: Images; sameNamedShowMe?: boole
 	const start = (env: NodeJS.ProcessEnv = {}): AgentProgram => {
 		const started = startProgram(
 			process.execPath,
-			[join(programDir, "src/main.ts"), "--store", join(root, "store"), "--agent", "real-agent", "--cwd", cwd, "--model", "local/echo"],
-			{ env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", ...env } },
+			[join(programDir, "src/main.ts"), "--store", join(root, "store"), "--agent", "real-agent", "--cwd", cwd, "--model", options.claudeModel ? "claude-local/claude-test" : "local/echo"],
+			{ env: { ...process.env, HOME: claude.home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", ...env } },
 		);
 		programs.push(started);
 		return started;
 	};
-	return { start, cwd, showMe, root };
+	return { start, cwd, showMe, root, claude };
 }
 
 async function turn(program: AgentProgram, content: string, requestId: string): Promise<string> {
@@ -156,7 +239,7 @@ async function turn(program: AgentProgram, content: string, requestId: string): 
 	return ((await program.call("wait", { submissionId })) as { status: string }).status;
 }
 
-type Stored = { kind: string; id: number; model?: { role: string; content: unknown }[] };
+type Stored = { kind: string; id: number; model?: { role: string; content: unknown; sections?: Record<string, string | null> }[] };
 /** The entries the bound conversation shows, through the program's own `entries` call: what ThroughLine reads. */
 async function storedEntries(program: AgentProgram): Promise<Stored[]> {
 	const all: Stored[] = [];
@@ -198,6 +281,7 @@ test("the prompt carries APPEND_SYSTEM.md once, the project context and Pi and D
 	assert.equal(system.split(APPEND_MARKER).length - 1, 1, "APPEND_SYSTEM.md appears exactly once");
 	assert.match(system, /Project rule: keep answers short\./);
 	assert.doesNotMatch(system, /running inside pi|PI_\* environment/);
+	assert.ok(!system.includes(RECORD_TEXT), "a model that is not on the Anthropic Messages API gets no Claude standard prompt");
 	// The docs guidance names folders an agent can actually read: pi's docs and Pi Durable's README.
 	assert.ok(system.includes(getDocsPath()), "pi's docs folder is named");
 	const durableReadme = /Pi Durable: (\S+README\.md)/.exec(system)?.[1];
@@ -342,4 +426,90 @@ test("an install-shaped copy without the old schema data file starts with image 
 	assert.equal(await turn(program, "hello", "j1"), "done", program.stderr());
 	assert.ok((model.bodies[0]?.tools ?? []).some((tool) => tool.function.name === "generate_image"), "the image tools are offered");
 	await stop(program);
+});
+
+// Claude Code's standard prompt. Pi Durable skips a section that throws and sends the request anyway, so the program
+// resolves the prompt before it answers hello; these cases run the real program against an Anthropic Messages endpoint.
+test("a Claude model's request carries Claude Code's standard prompt first, and the start line names its version and sha", { timeout: 60_000 }, async () => {
+	const model = await anthropicEndpoint("ok");
+	const program = layout(model.port, { images: "none", claudeModel: true }).start();
+	await program.hello;
+	assert.equal(await turn(program, "hello", "c1"), "done", program.stderr());
+	const system = anthropicSystem(model.bodies[0]);
+	assert.ok(system.startsWith(RECORD_TEXT), `the standard prompt comes first: ${system.slice(0, 120)}`);
+	assert.ok(program.stderr().includes(`claude standard prompt: claude ${CLAUDE_VERSION} sha ${sha(RECORD_TEXT).slice(0, 12)}`), program.stderr());
+	await stop(program);
+});
+
+test("when the standard prompt cannot be had the program refuses to start, says why, and sends no Claude request", { timeout: 60_000 }, async () => {
+	const model = await anthropicEndpoint("ok");
+	const setup = layout(model.port, { images: "none", claudeModel: true });
+	writeFileSync(setup.claude.recordPath, '{"claude_bin": "/Users/');
+	setup.claude.pinClaude(join(setup.root, "no-such-claude", CLAUDE_VERSION));
+	const program = setup.start();
+	const started = await program.hello.then(
+		() => true,
+		() => false,
+	);
+	// A program that starts anyway is asked for a turn, which shows whether a Claude request leaves without the prompt.
+	if (started) await turn(program, "hello", "r1").catch(() => undefined);
+	assert.equal(model.bodies.length, 0, `no Claude request is sent: ${program.stderr()}`);
+	assert.equal(await program.exited, EXIT.promptUnavailable);
+	assert.match(program.stderr(), /^CLAUDE_STANDARD_PROMPT_UNAVAILABLE: .*ENOENT.*non-negotiable/m);
+});
+
+test("an unusable cached prompt is recaptured once from the pinned Claude Code and replaced whole", { timeout: 180_000 }, async () => {
+	type Setup = ReturnType<typeof layout>;
+	const cases: [string, (setup: Setup) => void][] = [
+		["missing", (setup) => rmSync(setup.claude.recordPath)],
+		["torn", (setup) => writeFileSync(setup.claude.recordPath, '{"claude_bin": "/Users/')],
+		["altered", (setup) => writeFileSync(setup.claude.recordPath, JSON.stringify({ ...JSON.parse(promptRecord(setup.claude.claudeBin, RECORD_TEXT)), sha256: "0".repeat(64) }))],
+		["for another binary", (setup) => writeFileSync(setup.claude.recordPath, promptRecord(join(setup.root, "other", CLAUDE_VERSION), RECORD_TEXT))],
+		["naming the capture folder", (setup) => writeFileSync(setup.claude.recordPath, promptRecord(setup.claude.claudeBin, LEAKY_TEXT))],
+	];
+	for (const [name, damage] of cases) {
+		const model = await anthropicEndpoint("ok");
+		const setup = layout(model.port, { images: "none", claudeModel: true });
+		damage(setup);
+		const program = setup.start();
+		await program.hello;
+		assert.equal(await turn(program, "hello", `h-${name}`), "done", `${name}: ${program.stderr()}`);
+		assert.ok(anthropicSystem(model.bodies[0]).startsWith(CAPTURED_TEXT), `${name}: the request carries the fresh capture`);
+		assert.deepEqual(readdirSync(setup.claude.stateDir), [basename(setup.claude.recordPath)], `${name}: one record, no leftover file`);
+		const record = JSON.parse(readFileSync(setup.claude.recordPath, "utf8")) as { claude_bin: string; text: string; sha256: string };
+		assert.deepEqual([record.claude_bin, record.text, record.sha256], [setup.claude.claudeBin, CAPTURED_TEXT, sha(CAPTURED_TEXT)], name);
+		await stop(program);
+	}
+
+	// A fresh capture that names its own temporary folder is refused, never cached or sent.
+	const model = await anthropicEndpoint("ok");
+	const setup = layout(model.port, { images: "none", claudeModel: true });
+	rmSync(setup.claude.recordPath);
+	setup.claude.captures(LEAKY_TEXT);
+	const program = setup.start();
+	await assert.rejects(program.hello);
+	assert.equal(await program.exited, EXIT.promptUnavailable);
+	assert.match(program.stderr(), /^CLAUDE_STANDARD_PROMPT_UNAVAILABLE: .*temporary capture folder/m);
+	assert.equal(model.bodies.length, 0);
+	assert.ok(!existsSync(setup.claude.recordPath), "nothing is cached");
+});
+
+test("after a kill the restarted program still sends the standard prompt first, and the store holds it once", { timeout: 90_000 }, async () => {
+	const model = await anthropicEndpoint("ok");
+	const setup = layout(model.port, { images: "none", claudeModel: true });
+	const first = setup.start();
+	await first.hello;
+	assert.equal(await turn(first, "one", "k1"), "done", first.stderr());
+	first.kill();
+	await first.exited;
+	const second = setup.start();
+	await second.hello;
+	assert.equal(await turn(second, "two", "k2"), "done", second.stderr());
+	assert.ok(anthropicSystem(model.bodies.at(-1)).startsWith(RECORD_TEXT), "the second program's request carries the prompt first");
+	const stored = (await storedEntries(second))
+		.filter((entry) => entry.kind === "pi.system")
+		.map((entry) => entry.model?.[0]?.sections?.claude_standard)
+		.filter((text) => text !== undefined);
+	assert.deepEqual(stored, [RECORD_TEXT], "one claude_standard value across both programs");
+	await stop(second);
 });

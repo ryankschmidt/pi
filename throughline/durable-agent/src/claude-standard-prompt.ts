@@ -1,9 +1,11 @@
-// Claude Code's standard system prompt first, for Claude models on Pi's own Anthropic provider: the Durable form of
-// the pi-claude-standard-prompt coding-agent extension (workbench/tools/pi-claude-standard-prompt).
+// Claude Code's standard system prompt, first, for Pi Durable agents on Claude models (Pi's own Anthropic provider,
+// api anthropic-messages). This file is its one home: the capture from the pinned Claude Code, the cache and the section.
 // Ryan, Nov 3, 2026: "Of course, the standard Claude prompt is non-negotiable."
-// The capture and cache below are that extension's own code, unchanged, and share its cache folder, so both forms
-// send the same bytes. Here it is the first section, rendered before every other section. If it cannot be read, the
-// section throws and the request is not sent.
+// Pi Durable reports and skips a section that throws and sends the request anyway (packages/durable/src/harness/
+// prompt.ts), so a section cannot stop a request. The prompt is therefore resolved before the program serves anything
+// (claudeStandardPromptAtStart, called by main.ts), and the section only returns text it already holds.
+// The stock Pi extension (workbench tools/pi-claude-standard-prompt, installed as ~/.pi/agent/extensions/
+// claude-standard-prompt.js) is a frozen temporary copy that reads the same cache record; TQ-1019 retires it.
 import * as childProcess from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -11,9 +13,6 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { defineExtension, type Extension, section } from "@earendil-works/pi-durable";
-
-export const SHIM_CONFIG = "/Users/Admin/.local/state/ryan/fccl/static-shim-config.sh";
-export const STATE_DIR = path.join(os.homedir(), ".local/state/pi-claude-standard-prompt");
 
 export interface StandardPrompt {
   claude_bin: string;
@@ -24,14 +23,121 @@ export interface StandardPrompt {
   captured_at: string;
 }
 
+/** The prompt resolved at start, as a ready section, or the refusal that keeps the program from starting. */
+export type StartedPrompt =
+  | { ok: true; extension: Extension; claude_version: string; sha256: string }
+  | { ok: false; refusal: string };
+
+export const CLAUDE_STANDARD_PROMPT_EXTENSION = "claude-standard-prompt";
+export const CLAUDE_STANDARD_PROMPT_UNAVAILABLE = "CLAUDE_STANDARD_PROMPT_UNAVAILABLE";
+/** The capture's temporary Claude Code config folder starts with this; a prompt naming it would point at a deleted folder. */
+export const CAPTURE_DIR_PREFIX = "pi-claude-standard-prompt-";
+/** Cache folder, file names and record shape are shared with the frozen stock copy, so both send the same bytes. */
+export const STATE_DIR = path.join(os.homedir(), ".local/state/pi-claude-standard-prompt");
+
+/** Resolves the prompt once, before any turn, and returns the section; refuses when no usable prompt can be had. */
+export async function claudeStandardPromptAtStart(
+  apiOf: (provider: string, modelId: string) => string | undefined,
+): Promise<StartedPrompt> {
+  let prompt: StandardPrompt;
+  try {
+    // loadStandardPrompt returns only usable text: cached records and fresh captures both pass unusableReason.
+    prompt = await loadStandardPrompt();
+  } catch (error) {
+    return { ok: false, refusal: refusal(error instanceof Error ? error.message : String(error)) };
+  }
+  return {
+    ok: true,
+    extension: createClaudeStandardPromptExtension(prompt.text, (provider, modelId) => apiOf(provider, modelId) === "anthropic-messages"),
+    claude_version: prompt.claude_version,
+    sha256: prompt.sha256,
+  };
+}
+
+// The refusal says why the check exists. Every model is refused, not only Claude: ThroughLine can switch a running
+// thread to a Claude model, and a prompt loaded later would be a section that can fail, which Durable skips.
+function refusal(reason: string): string {
+  return (
+    `${CLAUDE_STANDARD_PROMPT_UNAVAILABLE}: ${reason}. ` +
+    "The agent program did not start. Claude Code's standard prompt is non-negotiable for Claude models, and Pi Durable " +
+    "sends a request without any section that fails, so starting now would send Claude turns without it. " +
+    `The prompt is captured once per pinned Claude Code into ${STATE_DIR}; fix the cause named above and start again.`
+  );
+}
+
+/** The section: the resolved text for models `takesPrompt` accepts, nothing otherwise. It holds no state. */
+export function createClaudeStandardPromptExtension(
+  text: string,
+  takesPrompt: (provider: string, modelId: string) => boolean,
+): Extension {
+  return defineExtension({
+    name: CLAUDE_STANDARD_PROMPT_EXTENSION,
+    sections: [
+      section(
+        "claude_standard",
+        (input) => {
+          const model = input.agent.model;
+          return model !== undefined && takesPrompt(model.provider, model.modelId) ? text : undefined;
+        },
+        { tag: false },
+      ),
+    ],
+  });
+}
+
+/** Cached per pinned binary: the standard prompt changes only when the Claude Code pin moves. Any unusable record is recaptured. */
+export async function loadStandardPrompt(claudeBin = pinnedClaude(), stateDir = STATE_DIR): Promise<StandardPrompt> {
+  const version = path.basename(claudeBin);
+  const cachePath = path.join(stateDir, `standard-prompt-${version.replace(/[^A-Za-z0-9._-]/g, "-")}.json`);
+  const hit = cachedPrompt(cachePath, claudeBin);
+  if (hit !== undefined) return hit;
+  const text = await capture(claudeBin);
+  const record: StandardPrompt = {
+    claude_bin: claudeBin,
+    claude_version: version,
+    text,
+    sha256: sha256(text),
+    first_line: text.split("\n")[0] ?? "",
+    captured_at: new Date().toISOString(),
+  };
+  fs.mkdirSync(stateDir, { recursive: true });
+  // Written whole, then renamed into place: several agents start at once after a pin move, and none may read half a record.
+  const temporary = path.join(stateDir, `.${path.basename(cachePath)}.${process.pid}.tmp`);
+  fs.writeFileSync(temporary, JSON.stringify(record, null, 1) + "\n");
+  fs.renameSync(temporary, cachePath);
+  return record;
+}
+
+/** The pinned Claude Code: the binary the governed `claude` launcher runs, named by the FCCL config's real_targets.claude. */
+export function pinnedClaude(configPath = path.join(os.homedir(), ".local/state/ryan/fccl/static-shim-config.json")): string {
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as { real_targets?: { claude?: unknown } } | null;
+  const claude = config?.real_targets?.claude;
+  if (typeof claude !== "string" || !path.isAbsolute(claude)) throw new Error(`${configPath} names no absolute real_targets.claude`);
+  return claude;
+}
+
+// A missing, torn, other-binary, altered or unusable record is a miss, never a refusal: the capture replaces it.
+function cachedPrompt(cachePath: string, claudeBin: string): StandardPrompt | undefined {
+  let record: Partial<StandardPrompt> | null;
+  try {
+    record = JSON.parse(fs.readFileSync(cachePath, "utf8")) as Partial<StandardPrompt> | null;
+  } catch {
+    return undefined;
+  }
+  const text = record?.text;
+  if (record?.claude_bin !== claudeBin || typeof text !== "string" || sha256(text) !== record?.sha256) return undefined;
+  return unusableReason(text) === undefined ? (record as StandardPrompt) : undefined;
+}
+
 export const sha256 = (text: string): string => crypto.createHash("sha256").update(text).digest("hex");
 
-/** The pinned Claude Code is the binary the governed `claude` launcher runs. */
-export function pinnedClaude(configPath = SHIM_CONFIG): string {
-  const text = fs.readFileSync(configPath, "utf8");
-  const match = text.match(/^RYAN_FCCL_REAL_CLAUDE='([^']+)'/m);
-  if (!match) throw new Error(`${configPath} names no RYAN_FCCL_REAL_CLAUDE`);
-  return match[1]!;
+/** Why a prompt text must not be sent, or undefined when it may: applied to fresh captures and cached records alike. */
+function unusableReason(text: string): string | undefined {
+  if (text.length < 1000) return `it is ${text.length} characters; Claude Code's full prompt is longer than 1,000`;
+  if (text.includes(CAPTURE_DIR_PREFIX)) {
+    return `it names Claude Code's temporary capture folder (${CAPTURE_DIR_PREFIX}...), which is deleted right after the capture`;
+  }
+  return undefined;
 }
 
 interface SystemBlock {
@@ -50,13 +156,15 @@ export function standardPromptFromBlocks(blocks: ReadonlyArray<SystemBlock>): st
     .filter((text) => !text.startsWith("x-anthropic-billing-header:"))
     .filter((text) => !(text.length < 200 && /^You are (Claude Code|a Claude agent)\b/.test(text)));
   const joined = kept.join("\n\n").replace(/\n*<total_tokens>[^<]*<\/total_tokens>\s*$/, "").trim();
-  if (joined.length < 1000) throw new Error(`captured standard prompt is ${joined.length} characters; expected Claude Code's full prompt`);
+  const problem = unusableReason(joined);
+  if (problem !== undefined) throw new Error(`the captured standard prompt is unusable: ${problem}`);
   return joined;
 }
 
+/** Runs the pinned Claude Code once against a loopback server and returns the standard prompt from its first request. */
 export function capture(claudeBin: string, model = "claude-opus-5-5", timeoutMs = 60_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-claude-standard-prompt-"));
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), CAPTURE_DIR_PREFIX));
     let settled = false;
     let child: childProcess.ChildProcess | undefined;
     const finish = (error: Error | null, text?: string) => {
@@ -98,82 +206,14 @@ export function capture(claudeBin: string, model = "claude-opus-5-5", timeoutMs 
           ANTHROPIC_API_KEY: "prompt-capture-placeholder",
           DISABLE_AUTOUPDATER: "1",
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+          // Pi Durable has no Claude Code auto memory; without this the prompt tells every agent to keep memory in
+          // configDir, deleted above. Documented at https://code.claude.com/docs/en/memory.
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
         },
       });
       child.on("error", (error) => finish(error));
       child.on("exit", () => setTimeout(() => finish(new Error(`${claudeBin} exited before sending a model request`)), 500));
     });
     setTimeout(() => finish(new Error(`no model request from ${claudeBin} within ${timeoutMs} ms`)), timeoutMs).unref();
-  });
-}
-
-/** Cached per pinned binary: the standard prompt changes only when the Claude Code pin moves. */
-export async function loadStandardPrompt(claudeBin = pinnedClaude(), stateDir = STATE_DIR): Promise<StandardPrompt> {
-  const version = path.basename(claudeBin);
-  const cachePath = path.join(stateDir, `standard-prompt-${version.replace(/[^A-Za-z0-9._-]/g, "-")}.json`);
-  if (fs.existsSync(cachePath)) {
-    const cached = JSON.parse(fs.readFileSync(cachePath, "utf8")) as StandardPrompt;
-    if (cached.claude_bin === claudeBin && sha256(cached.text) === cached.sha256) return cached;
-  }
-  const text = await capture(claudeBin);
-  const record: StandardPrompt = {
-    claude_bin: claudeBin,
-    claude_version: version,
-    text,
-    sha256: sha256(text),
-    first_line: text.split("\n")[0] ?? "",
-    captured_at: new Date().toISOString(),
-  };
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(cachePath, JSON.stringify(record, null, 1) + "\n");
-  return record;
-}
-
-export function composeSystemPrompt(standard: string, piPrompt: string): string {
-  if (piPrompt.startsWith(standard)) return piPrompt;
-  return `${standard}\n\n${piPrompt}`;
-}
-
-export const CLAUDE_STANDARD_PROMPT_EXTENSION = "claude-standard-prompt";
-
-function record(line: Record<string, unknown>): void {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.appendFileSync(path.join(STATE_DIR, "applied.jsonl"), JSON.stringify({ at: new Date().toISOString(), form: "durable", ...line }) + "\n");
-}
-
-/** The section. `apiOf` tells a model's API from its reference; only `anthropic-messages` gets the standard prompt. */
-export function createClaudeStandardPromptExtension(
-  apiOf: (provider: string, modelId: string) => string | undefined,
-  load: () => Promise<StandardPrompt> = () => loadStandardPrompt(),
-): Extension {
-  let standard: Promise<StandardPrompt> | undefined;
-  let recorded: string | undefined;
-  return defineExtension({
-    name: CLAUDE_STANDARD_PROMPT_EXTENSION,
-    sections: [
-      section(
-        "claude_standard",
-        async (input) => {
-          const model = input.agent.model;
-          if (model === undefined || apiOf(model.provider, model.modelId) !== "anthropic-messages") return undefined;
-          try {
-            standard ??= load();
-            const prompt = await standard;
-            const key = `${model.provider}/${model.modelId}:${prompt.sha256}`;
-            if (recorded !== key) {
-              recorded = key;
-              record({ model: `${model.provider}/${model.modelId}`, claude_version: prompt.claude_version, standard_sha256: prompt.sha256, standard_first_line: prompt.first_line });
-            }
-            return prompt.text;
-          } catch (error) {
-            standard = undefined;
-            const message = `Claude Code's standard prompt could not be read, so this Claude turn was stopped instead of being sent without it: ${error instanceof Error ? error.message : String(error)}`;
-            record({ model: `${model.provider}/${model.modelId}`, refused: message });
-            throw new Error(message);
-          }
-        },
-        { tag: false },
-      ),
-    ],
   });
 }

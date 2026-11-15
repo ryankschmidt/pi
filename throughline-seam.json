@@ -1893,6 +1893,7 @@
           "throughline/durable-agent/test/runtime-install.test.ts",
           "throughline/durable-agent/test/setup.test.ts",
           "throughline/durable-agent/test/fixtures/http-probe.ts",
+          "throughline/durable-agent/test/fixtures/fake-claude-code.ts",
           "throughline/durable-agent/proof/skill-command-read-eval.ts",
           "throughline/durable-agent/proof/show-me-page-eval.ts",
           "throughline/durable-agent/src/binding.ts",

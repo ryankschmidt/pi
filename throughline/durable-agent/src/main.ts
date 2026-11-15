@@ -12,10 +12,10 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
-import { createClaudeStandardPromptExtension } from "./claude-standard-prompt.ts";
+import { claudeStandardPromptAtStart } from "./claude-standard-prompt.ts";
 import { configureHttp } from "./http.ts";
 import { loadImageTools, READ_ONLY_IMAGE_TOOLS } from "./image-tools.ts";
-import { runProgram } from "./program.ts";
+import { EXIT, runProgram } from "./program.ts";
 import {
 	AgentResources,
 	createAgentRegistry,
@@ -58,6 +58,14 @@ const cwd = resolve(values.cwd ?? process.cwd());
 const settings = SettingsManager.create(cwd);
 configureHttp(settings);
 const models = await ModelRuntime.create();
+// Before anything is served: a prompt that cannot be had stops the program here, never a Claude turn later.
+const standard = await claudeStandardPromptAtStart((provider, modelId) => models.getModel(provider, modelId)?.api);
+if (!standard.ok) {
+	log(standard.refusal);
+	process.exit(EXIT.promptUnavailable);
+}
+log(`claude standard prompt: claude ${standard.claude_version} sha ${standard.sha256.slice(0, 12)}`);
+const claudeStandard = standard.extension;
 const envs = new ExecutionEnvs(cwd);
 const initial = initialModel(settings, models, values.model);
 const approvals = new Approvals();
@@ -78,7 +86,7 @@ const registryWith = (imageExtension: typeof images.extension) =>
 	createAgentRegistry(resources, storeDir, {
 		readsUnavailable: () => readsUnavailable,
 		// Claude Code's standard prompt renders before every other section.
-		first: [createClaudeStandardPromptExtension((provider, modelId) => models.getModel(provider, modelId)?.api)],
+		first: [claudeStandard],
 		after: [
 			createToolSearchExtension(),
 			imageExtension,
