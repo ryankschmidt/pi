@@ -1,5 +1,6 @@
 // ThroughLine's parts of every Pi Durable agent, in Durable form (map v3 section 4, rows 4-4 to 4-6):
-//   - approvals: a beforeTool hook that asks the connected client a keyed question and waits for its answer;
+//   - approvals: a beforeTool hook that asks the connected client a keyed question and waits for its answer; the
+//     answer is stored in the tool task's memo before the client is told it matched, so a rerun never asks again;
 //   - ThroughLine's tools, one Durable tool per tool ThroughLine lists, deferred behind tool_search except the three
 //     T3 keeps direct; each call travels over the program's own link and ThroughLine's server makes it;
 //   - ThroughLine's orchestration instructions as one section.
@@ -7,7 +8,17 @@
 // the ThroughLine fork), keeping its rules: full access asks nothing, read-only tools pass, auto-accept-edits passes
 // edit and write, and a declined call is blocked with "<tool> was declined in ThroughLine."
 
-import { defineExtension, defineTool, type Extension, hook, section, ToolTask } from "@earendil-works/pi-durable";
+import type { Context } from "@earendil-works/chord";
+import { awaitWithContext } from "@earendil-works/chord/context";
+import {
+	defineExtension,
+	defineTool,
+	type Extension,
+	hook,
+	type JsonObject,
+	section,
+	ToolTask,
+} from "@earendil-works/pi-durable";
 
 export type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
@@ -16,6 +27,8 @@ const FILE_CHANGE_TOOLS = new Set(["edit", "write"]);
 /** Names the agent sees for ThroughLine's tools; ThroughLine maps them to the stock screen's names. */
 export const TOOL_PREFIX = "throughline__";
 const DIRECT_TOOLS = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
+/** The tool task's memo holding the client's decision on its call; a hook and its task share memos. */
+const APPROVAL_MEMO = "throughline.approval";
 
 export type ApprovalQuestion = {
 	/** The tool call's id: stable across restarts, so a re-asked question reattaches to the same card. */
@@ -25,15 +38,27 @@ export type ApprovalQuestion = {
 	message: string;
 };
 export type ApprovalAnswer = "accept" | "acceptForSession" | "decline" | "cancel";
+/** Stores the decision with the call it decided and returns the stored one (the first stored wins). */
+export type RecordAnswer = (answer: ApprovalAnswer) => Promise<ApprovalAnswer>;
+
+type Waiting = {
+	readonly question: ApprovalQuestion;
+	readonly record: RecordAnswer;
+	readonly decided: Promise<ApprovalAnswer>;
+	readonly resolve: (answer: ApprovalAnswer) => void;
+	waiters: number;
+};
 
 /**
- * The program's side of approvals. `ask` sends the question to the connected client and resolves when an `answer`
- * call arrives with the same key. Answers given before the question (after a restart) are kept until asked.
+ * The program's side of approvals. `ask` sends the question to the connected client and waits for an `answer` with
+ * the same key, or for its run to stop. Nothing is kept for a key nobody asks: the question lives only while its tool
+ * task waits, and a task stopped by a close or a crash asks again when it runs again.
  */
 export class Approvals {
 	mode: RuntimeMode = "approval-required";
-	readonly #pending = new Map<string, { question: ApprovalQuestion; resolve: (answer: ApprovalAnswer) => void }>();
-	readonly #early = new Map<string, ApprovalAnswer>();
+	/** ThroughLine's read-only tools and the read-only image tools; replaced each time ThroughLine's tool list is installed. */
+	readOnly: ReadonlySet<string> = new Set();
+	readonly #pending = new Map<string, Waiting>();
 	readonly #sessionTools = new Set<string>();
 	#send: ((question: ApprovalQuestion) => void) | undefined;
 
@@ -51,50 +76,41 @@ export class Approvals {
 		return [...this.#sessionTools];
 	}
 
-	open(): ApprovalQuestion[] {
-		return [...this.#pending.values()].map((entry) => entry.question);
-	}
-
-	needsApproval(tool: string, readOnlyMcp: ReadonlySet<string>): boolean {
+	needsApproval(tool: string): boolean {
 		if (this.mode === "full-access") return false;
-		if (READ_ONLY_TOOLS.has(tool) || readOnlyMcp.has(tool)) return false;
+		if (READ_ONLY_TOOLS.has(tool) || this.readOnly.has(tool)) return false;
 		if (this.mode === "auto-accept-edits" && FILE_CHANGE_TOOLS.has(tool)) return false;
 		return !this.#sessionTools.has(tool);
 	}
 
-	ask(question: ApprovalQuestion): Promise<ApprovalAnswer> {
-		const early = this.#early.get(question.key);
-		if (early !== undefined) {
-			this.#early.delete(question.key);
-			return Promise.resolve(early);
-		}
-		const existing = this.#pending.get(question.key);
-		if (existing !== undefined) return new Promise((resolve) => this.#chain(question.key, resolve));
-		return new Promise((resolve) => {
-			this.#pending.set(question.key, { question, resolve });
+	/** Ask the client: ends with the stored decision, or rejects when `context` is aborted (a close or an abort). */
+	ask(question: ApprovalQuestion, record: RecordAnswer, context: Context): Promise<ApprovalAnswer> {
+		let entry = this.#pending.get(question.key);
+		if (entry === undefined) {
+			let resolve: (answer: ApprovalAnswer) => void = () => undefined;
+			const decided = new Promise<ApprovalAnswer>((settle) => {
+				resolve = settle;
+			});
+			entry = { question, record, decided, resolve, waiters: 0 };
+			this.#pending.set(question.key, entry);
 			this.#send?.(question);
+		}
+		const waiting = entry;
+		waiting.waiters += 1;
+		return awaitWithContext(waiting.decided, context).finally(() => {
+			waiting.waiters -= 1;
+			// A stopped run takes its question with it; its rerun asks again.
+			if (waiting.waiters === 0 && this.#pending.get(question.key) === waiting) this.#pending.delete(question.key);
 		});
 	}
 
-	#chain(key: string, resolve: (answer: ApprovalAnswer) => void): void {
+	/** The client's answer: true only once the decision is stored with its call; false when nothing asks that key. */
+	async answer(key: string, answer: ApprovalAnswer): Promise<boolean> {
 		const entry = this.#pending.get(key);
-		if (entry === undefined) return;
-		const previous = entry.resolve;
-		entry.resolve = (answer) => {
-			previous(answer);
-			resolve(answer);
-		};
-	}
-
-	answer(key: string, answer: ApprovalAnswer): boolean {
-		const entry = this.#pending.get(key);
-		if (entry === undefined) {
-			this.#early.set(key, answer);
-			return false;
-		}
-		this.#pending.delete(key);
-		if (answer === "acceptForSession") this.#sessionTools.add(entry.question.tool);
-		entry.resolve(answer);
+		if (entry === undefined) return false;
+		const decided = await entry.record(answer);
+		if (decided === "acceptForSession") this.#sessionTools.add(entry.question.tool);
+		entry.resolve(decided);
 		return true;
 	}
 }
@@ -110,20 +126,24 @@ function summary(args: unknown): string {
 	return text.length > 2000 ? `${text.slice(0, 2000)}…` : text;
 }
 
-/** The approvals hook. ThroughLine's read-only tools come from the tool list ThroughLine handed over. */
-export function createApprovalsExtension(approvals: Approvals, readOnlyMcp: ReadonlySet<string>): Extension {
+/**
+ * The approvals hook. The decision lives in the tool task's memo: the hook runs before the call's intent is stored, so
+ * a call stopped while it waits runs this hook again on resume and asks again, and a call already decided never asks.
+ */
+export function createApprovalsExtension(approvals: Approvals): Extension {
 	return defineExtension({
 		name: "throughline-approvals",
 		hooks: [
 			hook(ToolTask, {
-				beforeTool: async (call) => {
-					if (!approvals.needsApproval(call.name, readOnlyMcp)) return undefined;
-					const answer = await approvals.ask({
-						key: call.id,
-						tool: call.name,
-						title: `Allow ${call.name}?`,
-						message: summary(call.arguments),
-					});
+				beforeTool: async (call, api, context) => {
+					if (!approvals.needsApproval(call.name)) return undefined;
+					const answer =
+						(await api.memo<ApprovalAnswer>(APPROVAL_MEMO, context)) ??
+						(await approvals.ask(
+							{ key: call.id, tool: call.name, title: `Allow ${call.name}?`, message: summary(call.arguments) },
+							(decided) => api.memo<ApprovalAnswer>(APPROVAL_MEMO, decided, context),
+							context,
+						));
 					if (answer === "accept" || answer === "acceptForSession") return undefined;
 					return { block: `${call.name} was declined in ThroughLine.` };
 				},
@@ -169,18 +189,18 @@ export class ToolLink {
 export type ToolCallRequest = { id: string; name: string; arguments: unknown };
 export type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 export type ToolCallResult = { content: ToolContent[]; isError?: boolean };
-/** One entry of the tool list ThroughLine hands the program at start (`--tools <file>`). */
+/** One entry of the tool list ThroughLine hands the program in `configure` (`params.tools`); stored with the session. */
 export type ToolDescriptor = {
 	name: string;
 	description?: string;
-	inputSchema?: Record<string, unknown>;
+	inputSchema?: JsonObject;
 	readOnly?: boolean;
 };
 
 /**
  * ThroughLine's tools as Durable tools, one per descriptor, named `throughline__<tool>` and deferred behind
- * tool_search except the three T3 keeps direct. An empty list still installs the extension under the same name, so
- * stored names resolve after a restart without the list.
+ * tool_search except the three T3 keeps direct. An empty list still installs the extension under the same name; a
+ * later list replaces it in place (`Registry.install`).
  */
 export function createThroughLineToolsExtension(
 	descriptors: readonly ToolDescriptor[],

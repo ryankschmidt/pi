@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Command line of the Pi Durable agent program.
 //   node src/main.ts --store <dir> --agent <id> --cwd <dir> [--model provider/model] [--runtime-mode <mode>]
-//                    [--tools <file>] [--carry-from <stock Pi session file>]
+//                    [--carry-from <stock Pi session file>]
 // Models, logins, settings and skills come from pi's agent folder (PI_CODING_AGENT_DIR, default ~/.pi/agent).
-// ThroughLine passes the list of its tools as a JSON file (--tools) and its orchestration instructions
+// ThroughLine sends the list of its tools in `configure` (stored with the session) and its orchestration instructions
 // (T3_CODE_ORCHESTRATION_INSTRUCTIONS) in the environment. Tool calls go back to ThroughLine over stdin and stdout;
 // no MCP endpoint or credential is passed to the agent.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -32,7 +32,6 @@ import {
 	createOrchestrationExtension,
 	createThroughLineToolsExtension,
 	type RuntimeMode,
-	type ToolDescriptor,
 	ToolLink,
 } from "./throughline-extensions.ts";
 
@@ -43,13 +42,12 @@ const { values } = parseArgs({
 		cwd: { type: "string" },
 		model: { type: "string" },
 		"runtime-mode": { type: "string" },
-		tools: { type: "string" },
 		"carry-from": { type: "string" },
 	},
 });
 if (!values.store || !values.agent) {
 	process.stderr.write(
-		"usage: main.ts --store <dir> --agent <id> --cwd <dir> [--model provider/model] [--runtime-mode <mode>] [--tools <file>]\n",
+		"usage: main.ts --store <dir> --agent <id> --cwd <dir> [--model provider/model] [--runtime-mode <mode>]\n",
 	);
 	process.exit(2);
 }
@@ -71,8 +69,12 @@ const initial = initialModel(settings, models, values.model);
 const approvals = new Approvals();
 if (values["runtime-mode"]) approvals.mode = values["runtime-mode"] as RuntimeMode;
 const toolLink = new ToolLink();
-const descriptors: ToolDescriptor[] = values.tools ? JSON.parse(readFileSync(resolve(values.tools), "utf8")) : [];
-const tools = createThroughLineToolsExtension(descriptors, toolLink);
+// Installed empty under its name; the program installs the stored list before it resumes, and each changed list.
+const tools = createThroughLineToolsExtension([], toolLink);
+approvals.readOnly = READ_ONLY_IMAGE_TOOLS;
+// The first SIGTERM or SIGINT closes the program as closing stdin does; a second one ends it outright.
+const stop = new AbortController();
+for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, () => stop.abort());
 const storeDir = resolve(values.store);
 const resources = new AgentResources(settings, cwd);
 if (!existsSync(join(PINNED_SKILLS_DIR, "show-me/SKILL.md"))) {
@@ -92,7 +94,7 @@ const registryWith = (imageExtension: typeof images.extension) =>
 			imageExtension,
 			tools.extension,
 			createOrchestrationExtension(process.env),
-			createApprovalsExtension(approvals, new Set([...tools.readOnly, ...READ_ONLY_IMAGE_TOOLS])),
+			createApprovalsExtension(approvals),
 		],
 	});
 let registry: ReturnType<typeof registryWith>;
@@ -114,7 +116,15 @@ const code = await runProgram({
 	},
 	harness: { models, registry, settings: harnessSettings(settings), env: envs.env },
 	approvals,
-	tools: toolLink,
+	tools: {
+		link: toolLink,
+		install: (descriptors) => {
+			const installed = createThroughLineToolsExtension(descriptors, toolLink);
+			registry.install(installed.extension);
+			approvals.readOnly = new Set([...installed.readOnly, ...READ_ONLY_IMAGE_TOOLS]);
+		},
+	},
+	stop: stop.signal,
 	...(values["carry-from"] ? { carryFrom: resolve(values["carry-from"]) } : {}),
 	reap: true,
 	onReadsUnavailable: (reason) => {

@@ -17,6 +17,7 @@ import {
 	type EntryId,
 	Harness,
 	type HarnessOptions,
+	type JsonObject,
 	type SubmissionDraft,
 	type SubmissionId,
 	type TaskId,
@@ -41,7 +42,7 @@ import {
 	Refused,
 } from "./protocol.ts";
 import { rewind } from "./rewind.ts";
-import type { ApprovalAnswer, Approvals, RuntimeMode, ToolLink } from "./throughline-extensions.ts";
+import type { ApprovalAnswer, Approvals, RuntimeMode, ToolDescriptor, ToolLink } from "./throughline-extensions.ts";
 
 export const DURABLE_VERSION: string = (() => {
 	const entry = createRequire(import.meta.url).resolve("@earendil-works/pi-durable");
@@ -65,6 +66,14 @@ const SessionApprovals = defineDoc<{ tools: string[] }>({
 	initial: () => ({ tools: [] }),
 });
 
+/** ThroughLine's tool list as it last sent it, so a restarted program has the tools before it resumes a call. */
+const ThroughLineTools = defineDoc<{ tools: JsonObject[] }>({
+	kind: "throughline.tools",
+	version: 1,
+	scope: "session",
+	checkpointWhen: () => true,
+	initial: () => ({ tools: [] }),
+});
 
 export type ProgramOptions = {
 	/** Folder holding the store and its lock. */
@@ -79,8 +88,13 @@ export type ProgramOptions = {
 	log?: (line: string) => void;
 	/** ThroughLine approvals: the beforeTool hook asks through this object; the program carries its questions. */
 	approvals?: Approvals;
-	/** ThroughLine's tools: their calls leave on this link as `tool` messages and return as `toolResult`. */
-	tools?: ToolLink;
+	/**
+	 * ThroughLine's tools: their calls leave on `link` as `tool` messages and return as `toolResult`; `install` puts a
+	 * list in the registry, with the stored list before resume and with each changed list `configure` brings.
+	 */
+	tools?: { link: ToolLink; install: (descriptors: ToolDescriptor[]) => void };
+	/** Aborted to stop the program as closing its input does (main.ts: the first SIGTERM or SIGINT). */
+	stop?: AbortSignal;
 	/** A stock Pi session file to carry into the root conversation before resuming (see carry.ts). */
 	carryFrom?: string;
 	/** Kill commands an earlier killed program left running, and watch this one's (see reaper.ts). */
@@ -203,6 +217,10 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			const stored = await opened.snapshot(SessionApprovals, context);
 			for (const tool of stored?.tools ?? []) approvals.allowForSession(tool);
 		}
+		// Before resume: a ThroughLine tool call left waiting by the last program resolves its tool again.
+		// The stored entries were checked at the wire when `configure` wrote them.
+		const storedTools = ((await opened.snapshot(ThroughLineTools, context))?.tools ?? []) as ToolDescriptor[];
+		options.tools?.install(storedTools);
 		/** The conversation a conversation-scoped call names; never the root by default, never created by a call. */
 		const named = async (params: Record<string, unknown>): Promise<Conversation> => {
 			const id = params.conversationId;
@@ -239,7 +257,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			rootConversationId: Number(root.id),
 		});
 		approvals?.connect((question) => send({ kind: "question", question }));
-		options.tools?.connect((call) => send({ kind: "tool", ...call }));
+		options.tools?.link.connect((call) => send({ kind: "tool", ...call }));
 
 		let greeted = false;
 		let watchSerial = 0;
@@ -310,6 +328,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 					return await readEntries(conversation, params);
 				case "configure": {
 					if (approvals && typeof params.runtimeMode === "string") approvals.mode = params.runtimeMode as RuntimeMode;
+					if (params.tools !== undefined) await configureTools(params.tools);
 					const change: { model?: { provider: string; modelId: string }; thinkingLevel?: string; instructions?: string } = {};
 					if (typeof params.model === "string") {
 						const slash = params.model.indexOf("/");
@@ -323,6 +342,21 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 					return { model: agent.model ?? null, thinkingLevel: agent.thinkingLevel };
 				}
 			}
+		};
+
+		/** ThroughLine's tool list from `configure`: stored for the session and installed, only when it changed. */
+		const configureTools = async (value: unknown): Promise<void> => {
+			// Wire input: every entry is an object naming its tool.
+			if (!Array.isArray(value) || !value.every((entry) => typeof entry === "object" && entry !== null && typeof entry.name === "string")) {
+				throw new Refused("TOOLS_INVALID", "params.tools is a list of tools, each with a name");
+			}
+			const tools = value as JsonObject[];
+			const current = (await opened.snapshot(ThroughLineTools, context))?.tools ?? [];
+			if (JSON.stringify(current) === JSON.stringify(tools)) return;
+			await opened.commit(async (tx) => {
+				(await tx.doc(ThroughLineTools)).tools = tools;
+			}, context);
+			options.tools?.install(tools as ToolDescriptor[]);
 		};
 
 		/** A call on the store as a whole. */
@@ -356,7 +390,8 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				case "answer": {
 					if (!approvals) throw new Error("APPROVALS_NOT_INSTALLED");
 					const answer = String(params.answer) as ApprovalAnswer;
-					const matched = approvals.answer(String(params.key), answer);
+					// Answers only once the decision is stored with its call, so ThroughLine never closes a card the agent lost.
+					const matched = await approvals.answer(String(params.key), answer);
 					if (answer === "acceptForSession") {
 						await opened.commit(async (tx) => {
 							const stored = await tx.doc(SessionApprovals);
@@ -398,7 +433,7 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 				return;
 			}
 			if (message.kind === "toolResult") {
-				options.tools?.answer(message.id, { content: message.content, ...(message.isError === undefined ? {} : { isError: message.isError }) });
+				options.tools?.link.answer(message.id, { content: message.content, ...(message.isError === undefined ? {} : { isError: message.isError }) });
 				return;
 			}
 			if (message.kind === "cancel") {
@@ -431,6 +466,9 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		options.input.on("data", (chunk: string) => feed(chunk));
 		// Closing the input stops the program, as closing stdin stops Pi's RPC mode.
 		options.input.on("end", () => void stop(EXIT.ok));
+		// A signal is a close too: Durable puts a waiting call back to pending without counting a restart.
+		if (options.stop?.aborted) void stop(EXIT.ok);
+		options.stop?.addEventListener("abort", () => void stop(EXIT.ok), { once: true });
 		return await new Promise<number>((resolve) => {
 			const poll = setInterval(() => {
 				if (stopping) {
