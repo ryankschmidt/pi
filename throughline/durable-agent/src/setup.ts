@@ -39,9 +39,43 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 export { ModelRuntime, SettingsManager };
 
 /**
- * Harness settings read at every use from pi's settings. Automatic compaction is on with Pi Durable's own defaults
- * (Ryan, Nov 11, 2026: "It can be on now."): a context that nears its model's window is summarized and the run goes
- * on, where it used to end in an overflow error. Everything else follows pi's own settings file.
+ * Durable's compaction settings from pi's own compaction keys: `reserveTokens` and `keepRecentTokens`, harness-wide and
+ * per model under `modelOverrides["provider/modelId"]`, in the global or the project settings file. Unset keys keep
+ * pi's defaults, which equal Durable's (16384 and 20000). Durable's background compaction keeps its own default
+ * (32768 tokens below the blocking threshold); pi has no such key. Throws pi's own error for an invalid value.
+ *
+ * Automatic compaction stays on whatever pi's `compaction.enabled` says (Ryan, Nov 11, 2026: "It can be on now."). That
+ * key belongs to stock Pi threads, where ThroughLine's boundary add-ons replace compaction, and Ryan's settings file
+ * sets it false for them. Remove this override, and honor the key, when the stock Pi path is removed (proposed
+ * Dec 9, 2026, Pi-Durable-Direction-2026-11-06.md, "Where each of Ryan's add-ons stands").
+ */
+export function compactionSettings(settings: SettingsManager): NonNullable<HarnessSettings["compaction"]> {
+	const keys = new Set([
+		...Object.keys(settings.getGlobalSettings().compaction?.modelOverrides ?? {}),
+		...Object.keys(settings.getProjectSettings().compaction?.modelOverrides ?? {}),
+	]);
+	const modelOverrides: Record<string, { reserveTokens: number; keepRecentTokens: number }> = {};
+	for (const key of keys) {
+		const slash = key.indexOf("/");
+		if (slash <= 0) continue;
+		const model = { provider: key.slice(0, slash), id: key.slice(slash + 1) };
+		modelOverrides[key] = {
+			reserveTokens: settings.getCompactionReserveTokens(model),
+			keepRecentTokens: settings.getCompactionKeepRecentTokens(model),
+		};
+	}
+	return {
+		enabled: true,
+		reserveTokens: settings.getCompactionReserveTokens(),
+		keepRecentTokens: settings.getCompactionKeepRecentTokens(),
+		modelOverrides,
+	};
+}
+
+/**
+ * Harness settings read at every use from pi's settings. Automatic compaction is on with Pi Durable's own policy and
+ * pi's compaction token keys (`compactionSettings`): a context that nears its model's window is summarized and the run
+ * goes on, where it used to end in an overflow error. Everything else follows pi's own settings file.
  */
 export function harnessSettings(settings: SettingsManager): HarnessSettings {
 	return {
@@ -54,7 +88,9 @@ export function harnessSettings(settings: SettingsManager): HarnessSettings {
 				...(provider.maxRetries === undefined ? {} : { maxRetries: provider.maxRetries }),
 			};
 		},
-		compaction: { enabled: true },
+		get compaction() {
+			return compactionSettings(settings);
+		},
 		get retry() {
 			return settings.getRetrySettings();
 		},
@@ -147,6 +183,12 @@ const TOOL_LINES: Record<string, { line: string; rules: string[] }> = {
 		],
 	},
 	write: { line: "Create or overwrite files", rules: ["Use write only for new files or complete rewrites."] },
+	search_history: {
+		line: "Search your own full stored history, also entries a compaction summary replaced",
+		rules: [
+			"After a compaction the summary is not the record: every earlier entry is still stored, and search_history reaches it. Use it before relying on the summary for exact words, paths or results.",
+		],
+	},
 };
 const PREAMBLE =
 	"You are a coding agent run by ThroughLine's Pi Durable agent program. Help users inspect files, run commands, and modify code.";

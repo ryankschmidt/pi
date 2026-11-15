@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { initialModel } from "../src/setup.ts";
+import { DEFAULT_COMPACTION_POLICY } from "@earendil-works/pi-durable";
+import { compactionSettings, harnessSettings, initialModel } from "../src/setup.ts";
 
 const PROBE = fileURLToPath(new URL("./fixtures/http-probe.ts", import.meta.url));
 const closers: (() => void)[] = [];
@@ -44,6 +45,25 @@ test("the start model: --model wins, else pi's default with its thinking level; 
 	// An explicit id under a known provider passes through as stock pi's --model does; an unknown provider refuses.
 	assert.deepEqual(initialModel(withDefault, models, "local/new-id").model, { provider: "local", modelId: "new-id" });
 	assert.throws(() => initialModel(withDefault, models, "nowhere/echo"), /MODEL_NOT_RESOLVED/);
+});
+
+test("compaction: pi's token keys and per-model overrides reach Durable; pi's enabled:false (stock Pi's) does not turn it off", () => {
+	// Ryan's settings file shape: compaction off for stock Pi threads, nothing else set.
+	assert.deepEqual(compactionSettings(SettingsManager.inMemory({ compaction: { enabled: false } })), {
+		enabled: true,
+		reserveTokens: DEFAULT_COMPACTION_POLICY.reserveTokens,
+		keepRecentTokens: DEFAULT_COMPACTION_POLICY.keepRecentTokens,
+		modelOverrides: {},
+	});
+	// The live test's lever: one model's reserve raised, so its blocking threshold drops to window - reserve.
+	const lowered = SettingsManager.inMemory({
+		compaction: { enabled: false, keepRecentTokens: 8000, modelOverrides: { "anthropic/claude-opus-5-5": { reserveTokens: 920000 } } },
+	});
+	const resolved = compactionSettings(lowered);
+	assert.deepEqual(resolved.modelOverrides, { "anthropic/claude-opus-5-5": { reserveTokens: 920000, keepRecentTokens: 8000 } });
+	assert.deepEqual(harnessSettings(lowered).compaction, resolved);
+	// An invalid value fails with pi's own message; main.ts reads once at start and exits on it.
+	assert.throws(() => compactionSettings(SettingsManager.inMemory({ compaction: { reserveTokens: -1 } })), /Invalid compaction\.reserveTokens/);
 });
 
 async function server(handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<number> {

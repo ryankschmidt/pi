@@ -13,11 +13,14 @@ import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { claudeStandardPromptAtStart } from "./claude-standard-prompt.ts";
+import { SEARCH_HISTORY_TOOL } from "./history.ts";
+import { createHistoryExtension } from "./history-tool.ts";
 import { configureHttp } from "./http.ts";
 import { loadImageTools, READ_ONLY_IMAGE_TOOLS } from "./image-tools.ts";
 import { EXIT, runProgram } from "./program.ts";
 import {
 	AgentResources,
+	compactionSettings,
 	createAgentRegistry,
 	PINNED_SKILLS_DIR,
 	ExecutionEnvs,
@@ -57,6 +60,14 @@ const log = (line: string) => process.stderr.write(`${line}\n`);
 const cwd = resolve(values.cwd ?? process.cwd());
 const settings = SettingsManager.create(cwd);
 configureHttp(settings);
+// Read once before anything is served, so an invalid compaction value stops the program here with pi's own error,
+// never inside a run's prepare step, where Durable reads it again.
+try {
+	compactionSettings(settings);
+} catch (error) {
+	log(error instanceof Error ? error.message : String(error));
+	process.exit(EXIT.failed);
+}
 const models = await ModelRuntime.create();
 // Before anything is served: a prompt that cannot be had stops the program here, never a Claude turn later.
 const standard = await claudeStandardPromptAtStart((provider, modelId) => models.getModel(provider, modelId)?.api);
@@ -89,10 +100,11 @@ const registryWith = (imageExtension: typeof images.extension) =>
 		first: [claudeStandard],
 		after: [
 			createToolSearchExtension(),
+			createHistoryExtension(),
 			imageExtension,
 			tools.extension,
 			createOrchestrationExtension(process.env),
-			createApprovalsExtension(approvals, new Set([...tools.readOnly, ...READ_ONLY_IMAGE_TOOLS])),
+			createApprovalsExtension(approvals, new Set([...tools.readOnly, ...READ_ONLY_IMAGE_TOOLS, SEARCH_HISTORY_TOOL])),
 		],
 	});
 let registry: ReturnType<typeof registryWith>;
