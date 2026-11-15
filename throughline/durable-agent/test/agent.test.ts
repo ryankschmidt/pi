@@ -516,3 +516,29 @@ test("after a kill the restarted program still sends the standard prompt first, 
 	assert.deepEqual(stored, [RECORD_TEXT], "one claude_standard value across both programs");
 	await stop(second);
 });
+
+// Tools-approvals done test, at the real entry: a desktop quit SIGTERMs src/main.ts while an approval waits. The program
+// closes (exit 0), the next program asks the same question again without a new model request, and accept runs it once.
+test("a SIGTERM while an approval waits: the restarted program asks the same question, replays no model request, and accept runs the tool once", { timeout: 90_000 }, async () => {
+	const model = await modelEndpoint([{ tool: "bash", args: { command: "echo once >> witness.txt" } }, { text: "done" }]);
+	const setup = layout(model.port, { images: "none" });
+	const first = setup.start();
+	const asked = new Promise<{ key: string; tool: string }>((resolve) => first.onQuestion(resolve));
+	await first.hello;
+	const { submissionId } = (await first.call("submit", { conversationId: await first.root(), content: "run it", requestId: "s1" })) as { submissionId: number };
+	const question = await asked;
+	assert.equal(question.tool, "bash");
+	first.child.kill("SIGTERM");
+	assert.equal(await first.exited, EXIT.ok, first.stderr());
+	assert.ok(!existsSync(join(setup.cwd, "witness.txt")), "nothing ran before the answer");
+	const second = setup.start();
+	const again = new Promise<{ key: string; tool: string }>((resolve) => second.onQuestion(resolve));
+	await second.hello;
+	assert.equal((await again).key, question.key, "the same question, under the same key");
+	assert.equal(model.bodies.length, 1, "the restart replays no model request");
+	assert.deepEqual(await second.call("answer", { key: question.key, answer: "accept" }), { matched: true });
+	assert.equal(((await second.call("wait", { submissionId })) as { status: string }).status, "done", second.stderr());
+	assert.equal(readFileSync(join(setup.cwd, "witness.txt"), "utf8"), "once\n");
+	assert.equal(model.bodies.length, 2, "one request after the tool result");
+	await stop(second);
+});
