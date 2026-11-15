@@ -580,3 +580,34 @@ test("past pi's compaction threshold the agent compacts, keeps answering, and se
 	assert.equal((await storedEntries(second)).filter((entry) => entry.kind === "pi.compaction").length >= 1, true, "the compaction entry survives the restart");
 	await stop(second);
 });
+
+// The case above runs on an OpenAI-completions endpoint. ThroughLine's main agent is Claude, on Anthropic Messages, where
+// the standard prompt is a section rendered first: the compaction summary is written over the same API, and the turn
+// after it still carries the standard prompt first and the summary in place of the earlier note.
+test("on a Claude model past the threshold the agent compacts over Anthropic Messages, keeps answering, and keeps the standard prompt first", { timeout: 90_000 }, async () => {
+	const MARKER = "PRECOMPACT-CLAUDE-5b9a";
+	const model = await anthropicEndpoint("Summary: the user left a note earlier.");
+	const setup = layout(model.port, { images: "none", claudeModel: true });
+	writeFileSync(
+		join(setup.root, "pi-agent/models.json"),
+		JSON.stringify({ providers: { "claude-local": { baseUrl: `http://127.0.0.1:${model.port}`, api: "anthropic-messages", apiKey: "local", models: [{ id: "claude-test", contextWindow: 128_000 }] } } }),
+	);
+	mkdirSync(join(setup.cwd, ".pi"));
+	writeFileSync(join(setup.cwd, ".pi/settings.json"), JSON.stringify({ compaction: { keepRecentTokens: 2_000, modelOverrides: { "claude-local/claude-test": { reserveTokens: 118_000 } } } }));
+	const program = setup.start();
+	await program.hello;
+	assert.equal(await turn(program, `Remember this note: ${MARKER}.`, "k1"), "done", program.stderr());
+	const before = model.bodies.length;
+	assert.equal(await turn(program, `AFTER-COMPACT ${"filler words that grow the context ".repeat(1_400)}`, "k2"), "done", program.stderr());
+
+	const stored = await storedEntries(program);
+	assert.ok(stored.some((entry) => entry.kind === "pi.compaction"), `the store holds a compaction entry: ${stored.map((entry) => entry.kind).join(", ")}`);
+	assert.ok(stored.some((entry) => entry.kind === "pi.user" && JSON.stringify(entry.model?.[0]?.content).includes(MARKER)), "the entry from before the compaction is still stored");
+	const later = model.bodies.slice(before);
+	assert.ok(later.length >= 2, `a summary request and the turn's own request both went over Anthropic Messages (${later.length})`);
+	const asked = later.at(-1) as AnthropicBody;
+	assert.ok(JSON.stringify(asked.messages).includes("AFTER-COMPACT"), "the turn after the compaction reached the model");
+	assert.ok(!JSON.stringify(asked.messages).includes(`Remember this note: ${MARKER}`), "after the compaction the model sees the summary, not the note");
+	assert.ok(anthropicSystem(asked).startsWith(RECORD_TEXT), "the standard prompt still comes first after the compaction");
+	await stop(program);
+});
