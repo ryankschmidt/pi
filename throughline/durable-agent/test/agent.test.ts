@@ -57,8 +57,11 @@ after(() => {
 type Reply = { text: string } | { tool: string; args: object };
 type RequestBody = { messages: { role: string; content: unknown }[]; tools?: { function: { name: string } }[] };
 
-/** A local OpenAI-compatible endpoint: answers request n with replies[n] (the last one repeats) and records bodies. */
-async function modelEndpoint(replies: Reply[]) {
+/**
+ * A local OpenAI-compatible endpoint: answers request n with replies[n] (the last one repeats), or with what `replies`
+ * returns for the request's body, and records bodies.
+ */
+async function modelEndpoint(replies: Reply[] | ((body: RequestBody) => Reply)) {
 	const bodies: RequestBody[] = [];
 	const server = createServer((req, res) => {
 		// Other local software probes newly opened ports (GET /); only the model requests are the agent's.
@@ -71,8 +74,9 @@ async function modelEndpoint(replies: Reply[]) {
 			raw += chunk;
 		});
 		req.on("end", () => {
-			bodies.push(JSON.parse(raw) as RequestBody);
-			const reply = replies[Math.min(bodies.length - 1, replies.length - 1)] as Reply;
+			const body = JSON.parse(raw) as RequestBody;
+			bodies.push(body);
+			const reply = typeof replies === "function" ? replies(body) : (replies[Math.min(bodies.length - 1, replies.length - 1)] as Reply);
 			const delta =
 				"text" in reply
 					? { role: "assistant", content: reply.text }
@@ -515,4 +519,45 @@ test("after a kill the restarted program still sends the standard prompt first, 
 		.filter((text) => text !== undefined);
 	assert.deepEqual(stored, [RECORD_TEXT], "one claude_standard value across both programs");
 	await stop(second);
+});
+
+// layout's pi settings carry compaction.enabled false, as Ryan's do for stock Pi threads. A Durable agent still compacts,
+// at the threshold pi's own keys set in the project's settings, and reaches what the summary replaced through search_history.
+test("past pi's compaction threshold the agent compacts, keeps answering, and search_history reaches an entry from before the summary", { timeout: 90_000 }, async () => {
+	const MARKER = "PRECOMPACT-NOTE-1d7e";
+	const text = (content: unknown) => (typeof content === "string" ? content : JSON.stringify(content));
+	const model = await modelEndpoint((body) => {
+		const last = body.messages.at(-1);
+		if (last?.role === "tool") return { text: "found the note" };
+		// The summary request offers no tools; the agent's own turn does.
+		if (body.tools?.length && text(last?.content).includes("SEARCH-NOW")) return { tool: "search_history", args: { query: MARKER } };
+		return { text: "Summary: the user left a note earlier." };
+	});
+	const setup = layout(model.port, { images: "none" });
+	writeFileSync(
+		join(setup.root, "pi-agent/models.json"),
+		JSON.stringify({ providers: { local: { baseUrl: `http://127.0.0.1:${model.port}/v1`, api: "openai-completions", apiKey: "local", models: [{ id: "echo", contextWindow: 128_000 }] } } }),
+	);
+	// Blocking threshold 10,000 tokens (128,000 - 118,000), set only through pi's keys in the project's settings.
+	mkdirSync(join(setup.cwd, ".pi"));
+	writeFileSync(join(setup.cwd, ".pi/settings.json"), JSON.stringify({ compaction: { keepRecentTokens: 2_000, modelOverrides: { "local/echo": { reserveTokens: 118_000 } } } }));
+	const program = setup.start();
+	await program.hello;
+	assert.equal(await turn(program, `Remember this note: ${MARKER}.`, "c1"), "done", program.stderr());
+	// About 12,000 estimated tokens: over the threshold, so this turn compacts before its request.
+	assert.equal(await turn(program, `SEARCH-NOW for the note. ${"filler words that grow the context ".repeat(1_400)}`, "c2"), "done", program.stderr());
+
+	const stored = await storedEntries(program);
+	assert.ok(stored.some((entry) => entry.kind === "pi.compaction"), `the store holds a compaction entry: ${stored.map((entry) => entry.kind).join(", ")}`);
+	assert.ok(stored.some((entry) => entry.kind === "pi.user" && text(entry.model?.[0]?.content).includes(MARKER)), "the entry from before the compaction is still stored");
+	const asked = model.bodies.find((body) => body.tools?.length && text(body.messages.at(-1)?.content).includes("SEARCH-NOW"));
+	assert.ok(asked !== undefined, "the turn after the compaction reached the model");
+	assert.ok(!asked.messages.some((message) => message.role !== "system" && text(message.content).includes(MARKER)), "after the compaction the model no longer sees the note");
+	assert.ok(asked.tools?.some((tool) => tool.function.name === "search_history"), "search_history is offered");
+	const result = model.bodies.map((body) => body.messages.at(-1)).find((message) => message?.role === "tool");
+	assert.ok(result !== undefined, "search_history answered without an approval question");
+	const page = JSON.parse(text(result.content)) as { results: { context: string; text: string }[] };
+	const hit = page.results.find((entry) => entry.text.includes(MARKER));
+	assert.equal(hit?.context, "compacted", text(result.content));
+	await stop(program);
 });

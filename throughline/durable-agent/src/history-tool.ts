@@ -63,7 +63,7 @@ export function createHistoryExtension(): Extension {
 					});
 					return { output: [{ type: "text", text: JSON.stringify(page) }] };
 				},
-			} as never),
+			}),
 		],
 	});
 }
