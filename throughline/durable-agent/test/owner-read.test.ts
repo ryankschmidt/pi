@@ -27,7 +27,7 @@ const servers: { close(): Promise<void> }[] = [];
 after(async () => {
 	for (const server of servers) await server.close();
 });
-/** The program's rebind (program.ts): the generation is odd while it runs; it abandons reads in flight. */
+/** A change of the conversation the program follows (program.ts): the generation moves; reads in flight are abandoned. */
 function thread(first: Conversation) {
 	let bound = first;
 	let generation = 0;
@@ -38,11 +38,9 @@ function thread(first: Conversation) {
 			reads = served;
 		},
 		rebind: async (next: Conversation) => {
-			generation++;
+			generation += 1;
 			reads?.abandon();
-			await Promise.resolve();
 			bound = next;
-			generation++;
 		},
 	};
 }
@@ -150,7 +148,7 @@ test("a read whose rebind generation moved before its reply is answered REWOUND,
 	servers.push(reads);
 	const reading = exchange(reads.socket, call());
 	await new Promise((resolve) => setTimeout(resolve, 50));
-	generation += 2;
+	generation += 1;
 	release();
 	assert.equal((await reading).lines[0]?.code, "REWOUND");
 });
@@ -175,4 +173,12 @@ test("the socket lives in a private folder that close removes", async () => {
 	assert.ok(existsSync(reads.socket));
 	await reads.close();
 	assert.ok(!existsSync(reads.socket));
+});
+
+// Protocol 3 (fork-at-turn): the program follows the conversation ThroughLine names on each call and keeps no binding,
+// so a program that has just started serves no read until ThroughLine names one; it never guesses the root.
+test("before ThroughLine names a conversation, a read is refused NOT_ADDRESSED and nothing is read", async () => {
+	const reads = await serveOwnerReads("/store", { generation: () => 0, conversation: () => undefined }, BACKGROUND_CONTEXT);
+	servers.push(reads);
+	assert.equal((await exchange(reads.socket, call())).lines[0]?.code, "NOT_ADDRESSED");
 });

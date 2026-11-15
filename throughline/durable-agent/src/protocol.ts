@@ -2,7 +2,8 @@
 // Kinds borrow Chord v2's meanings (hello, call, result, error, cancel, ping); method names are Pi Durable's.
 // This file and connection.ts are the only files that know the wire.
 
-export const PROTOCOL_VERSION = 2;
+// 3: the program keeps no binding; every conversation-scoped call names its conversation, and a rewind is one `fork`.
+export const PROTOCOL_VERSION = 3;
 export const ENGINE = "pi-durable";
 
 export type Hello = {
@@ -15,7 +16,8 @@ export type Hello = {
 	store?: string;
 	agent?: string;
 	pid: number;
-	conversationId?: number;
+	/** The store's root conversation (program hello only); a new thread shows it until a rewind moves the thread. */
+	rootConversationId?: number;
 };
 export type Call = { kind: "call"; id: string; method: Method; params?: Record<string, unknown> };
 export type Result = { kind: "result"; id: string; value: unknown };
@@ -54,8 +56,7 @@ export type Method =
 	| "status"
 	| "drain"
 	| "answer"
-	| "configure"
-	| "forkBefore";
+	| "configure";
 
 export const METHODS: readonly Method[] = [
 	"submit",
@@ -71,8 +72,18 @@ export const METHODS: readonly Method[] = [
 	"drain",
 	"answer",
 	"configure",
-	"forkBefore",
 ];
+
+/** Methods that act on one conversation: their params carry `conversationId`, and none falls back to the root. */
+export const CONVERSATION_METHODS: readonly Method[] = ["submit", "abort", "compact", "fork", "watch", "entries", "configure"];
+
+/** A refusal the client reads by its wire `code` (the error's name); nothing was changed. */
+export class Refused extends Error {
+	constructor(code: string, message: string) {
+		super(message);
+		this.name = code;
+	}
+}
 
 export type ClientMessage = Hello | Call | Cancel | Ping | ToolResult;
 export type ProgramMessage = Hello | Result | ErrorMessage | Pong | View | Question | ToolCall;

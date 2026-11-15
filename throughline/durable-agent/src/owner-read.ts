@@ -2,12 +2,13 @@
 // socket's path is written in the store's owner.lock, so it belongs to the live owner. Each connection carries exactly
 // one `entries` request and one reply, then closes; both are counted in bytes before anything is parsed or sent, and
 // each phase has an absolute deadline, so a reader can neither hold the agent's memory or database nor keep a slot. A
-// read is a page of the bound conversation up to a fixed last entry: the first page fixes it, later pages name the same
-// conversation and last entry. A rewind never waits on a read: the program's rebind generation (BoundNow) is odd while
-// a rebind runs and moves on at its start and end; a rebind abandons every read in flight with REWOUND, a read that
-// starts during a rebind is refused, and a reply is sent only if the generation has not moved since its read began, in
-// the same step as the send. So a reply is the branch live for the whole read, never a withdrawn one, and the reader
-// starts again on REWOUND.
+// read is a page of the conversation ThroughLine last named to the program (the one its thread shows) up to a fixed last
+// entry: the first page fixes it, later pages name the same conversation and last entry. A rewind never waits on a read:
+// the program's generation (AddressedNow) moves whenever the named conversation changes, in one synchronous step, so no
+// read starts mid-change; a change abandons every read in flight with REWOUND, and a reply is sent only if the
+// generation has not moved since its read began, in the same step as the send. So a reply is
+// the branch live for the whole read, never a withdrawn one, and the reader starts again on REWOUND. Before ThroughLine
+// names any conversation (a program just restarted), reads are refused with NOT_ADDRESSED rather than guessing the root.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
@@ -19,10 +20,10 @@ import { encode, type ProgramMessage } from "./protocol.ts";
 
 /** One page of a read: the conversation and last entry it is fixed to, the entries after `after`, and whether more follow. */
 export type ReadPage = { store: string; conversationId: number; lastEntryId: number; items: unknown[]; more: boolean };
-/** `abandon` ends every read in flight with REWOUND; the program calls it when a rebind starts. */
+/** `abandon` ends every read in flight with REWOUND; the program calls it when the named conversation changes. */
 export type OwnerReads = { readonly socket: string; abandon(): void; close(): Promise<void> };
-/** The program's bound conversation now, and its rebind generation (odd while a rebind runs). */
-export type BoundNow = { generation(): number; conversation(): Conversation };
+/** The conversation ThroughLine last named (none yet after a start), and the generation that moves when it changes. */
+export type AddressedNow = { generation(): number; conversation(): Conversation | undefined };
 
 /** Limits of one connection, in bytes and milliseconds from the moment the phase starts. */
 export type ReadLimits = {
@@ -47,7 +48,7 @@ export const READ_LIMITS: ReadLimits = {
  * past the macOS socket path limit, so the path lives in the owner record) and answer one `entries` request per
  * connection. Throws if the socket cannot be created; the program then runs without it (program.ts).
  */
-export async function serveOwnerReads(store: string, bound: BoundNow, context: Context, limits: ReadLimits = READ_LIMITS): Promise<OwnerReads> {
+export async function serveOwnerReads(store: string, addressed: AddressedNow, context: Context, limits: ReadLimits = READ_LIMITS): Promise<OwnerReads> {
 	// mkdtemp makes the folder 0700 before the socket exists, so no other user can reach the socket at any moment.
 	const folder = mkdtempSync(join(tmpdir(), "pi-durable-"));
 	const socketPath = join(folder, "read.sock");
@@ -56,7 +57,7 @@ export async function serveOwnerReads(store: string, bound: BoundNow, context: C
 	const server = createServer((socket) => {
 		open.add(socket);
 		socket.on("close", () => open.delete(socket));
-		answerOne(socket, store, bound, inFlight, context, limits);
+		answerOne(socket, store, addressed, inFlight, context, limits);
 	});
 	server.maxConnections = limits.connections;
 	try {
@@ -84,7 +85,7 @@ export async function serveOwnerReads(store: string, bound: BoundNow, context: C
 }
 
 /** Read one request line within the byte limit and deadline, answer it within the reply deadline, and close. */
-function answerOne(socket: Socket, store: string, bound: BoundNow, inFlight: Set<() => void>, context: Context, limits: ReadLimits): void {
+function answerOne(socket: Socket, store: string, addressed: AddressedNow, inFlight: Set<() => void>, context: Context, limits: ReadLimits): void {
 	const chunks: Buffer[] = [];
 	let received = 0;
 	let answered = false;
@@ -116,13 +117,12 @@ function answerOne(socket: Socket, store: string, bound: BoundNow, inFlight: Set
 		const request = parseRequest(Buffer.concat(chunks).toString("utf8"));
 		if ("error" in request) return reply({ kind: "error", code: "BAD_REQUEST", message: request.error });
 		const rewound = () => reply({ kind: "error", id: request.id, code: "REWOUND", message: "the thread was rewound during the read; read it again" });
-		const began = bound.generation();
-		if (began % 2 === 1) return rewound();
-		// Abandoned at a rebind, or by a reader that left: the read's own work is not awaited by anything.
+		const began = addressed.generation();
+		// Abandoned at a change of the named conversation, or by a reader that left: the read's own work is not awaited by anything.
 		inFlight.add(rewound);
 		socket.on("close", () => inFlight.delete(rewound));
-		readPage(store, bound.conversation(), request.params, context, limits, request.id).then(
-			(page) => (bound.generation() === began ? reply({ kind: "result", id: request.id, value: page }) : rewound()),
+		readPage(store, addressed.conversation(), request.params, context, limits, request.id).then(
+			(page) => (addressed.generation() === began ? reply({ kind: "result", id: request.id, value: page }) : rewound()),
 			(error: unknown) =>
 				reply({
 					kind: "error",
@@ -163,8 +163,9 @@ class ReadRefused extends Error {
 	}
 }
 
-/** One page of the bound conversation up to its last entry (fixed by the first page), trimmed so the whole reply fits. */
-async function readPage(store: string, bound: Conversation, params: Params, context: Context, limits: ReadLimits, id: string): Promise<ReadPage> {
+/** One page of the named conversation up to its last entry (fixed by the first page), trimmed so the whole reply fits. */
+async function readPage(store: string, bound: Conversation | undefined, params: Params, context: Context, limits: ReadLimits, id: string): Promise<ReadPage> {
+	if (bound === undefined) throw new ReadRefused("NOT_ADDRESSED", "ThroughLine has not named this thread's conversation since the agent started; read it again once a turn starts");
 	const conversationId = Number(bound.id);
 	if (params.conversationId !== undefined && params.conversationId !== conversationId) {
 		throw new ReadRefused("REWOUND", "the thread was rewound during the read; read it again");

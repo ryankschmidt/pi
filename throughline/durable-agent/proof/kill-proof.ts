@@ -30,12 +30,12 @@ async function launch(name: string, store: string, cwd: string): Promise<Program
 	program.name = name;
 	program.views = 0;
 	const hello = await program.hello;
-	note(`${name}: started pid ${hello.pid}, protocol ${hello.protocol}, ${hello.engine} ${hello.version}, conversation ${hello.conversationId}`);
+	note(`${name}: started pid ${hello.pid}, protocol ${hello.protocol}, ${hello.engine} ${hello.version}, conversation ${hello.rootConversationId}`);
 	program.onView((view) => {
 		program.view = view.value as Json;
 		program.views++;
 	});
-	await program.call("watch");
+	await program.call("watch", { conversationId: await program.root() });
 	return program;
 }
 
@@ -62,7 +62,7 @@ const partialText = (view: Json) =>
 const hasEntry = (view: Json, kind: string) => (view.entries as Json[]).some((e) => e.kind === kind);
 
 async function allEntries(program: Program): Promise<Json[]> {
-	const page = (await program.call("entries", { limit: 1000, order: "ascending" })) as { items: Json[] };
+	const page = (await program.call("entries", { conversationId: await program.root(), limit: 1000, order: "ascending" })) as { items: Json[] };
 	return page.items;
 }
 
@@ -96,13 +96,13 @@ const results: Json = { model, startedAt: new Date().toISOString() };
 	const first = await launch("proof-mid-answer", store, cwd);
 	// The broker answers a request that carries a tool result in one burst, so the answer after bash has no
 	// mid-stream moment to cut. Bash runs to completion in its own run; the next run's long answer is cut.
-	const bash = (await first.call("submit", {
+	const bash = (await first.call("submit", { conversationId: await first.root(),
 		requestId: "s1-bash",
 		content: "Use the bash tool exactly once to run: echo answer-proof >> proof.txt\nThen reply with the single word: ok",
 	})) as { submissionId: number };
 	const bashSettled = (await first.call("wait", { submissionId: bash.submissionId })) as Json;
 	note(`s1: bash run settled ${bashSettled.status}`);
-	const { submissionId } = (await first.call("submit", {
+	const { submissionId } = (await first.call("submit", { conversationId: await first.root(),
 		requestId: "s1-question",
 		content:
 			"Without using any tool, write a long answer: count from 1 to 150, one number per line, each followed by one English word.",
@@ -152,7 +152,7 @@ const results: Json = { model, startedAt: new Date().toISOString() };
 	const store = join(runDir, "s2-store");
 	const cwd = join(runDir, "s2-cwd");
 	const first = await launch("proof-mid-bash", store, cwd);
-	const { submissionId } = (await first.call("submit", {
+	const { submissionId } = (await first.call("submit", { conversationId: await first.root(),
 		requestId: "s2-question",
 		content:
 			"Use the bash tool exactly once to run: echo start-$$ >> proof.txt; sleep 15; echo end-$$ >> proof.txt\nThen reply in one short sentence saying what the tool result said. Do not run the command again whatever the result.",
@@ -194,18 +194,18 @@ const results: Json = { model, startedAt: new Date().toISOString() };
 	const store = join(runDir, "s3-store");
 	const cwd = join(runDir, "s3-cwd");
 	const program = await launch("proof-steer", store, cwd);
-	const q = (await program.call("submit", {
+	const q = (await program.call("submit", { conversationId: await program.root(),
 		requestId: "s3-question",
 		content: "Use the bash tool once to run: sleep 8; echo s3-done\nThen answer in one sentence.",
 	})) as { submissionId: number };
 	await until(program, "the bash call running", (v) => Array.isArray(live(v).tools) && live(v).tools.length > 0);
-	const steer = (await program.call("submit", {
+	const steer = (await program.call("submit", { conversationId: await program.root(),
 		requestId: "s3-steer",
 		content: "Also include the word PELICAN in your answer.",
 		whenBusy: "steer",
 		whenIdle: "reject",
 	})) as { submissionId: number };
-	const follow = (await program.call("submit", {
+	const follow = (await program.call("submit", { conversationId: await program.root(),
 		requestId: "s3-follow",
 		content: "Now reply with only the word FOLLOWUP.",
 	})) as { submissionId: number };

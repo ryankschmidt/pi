@@ -5,6 +5,9 @@
 // program runs its own installed code over a scripted model that runs the bash a user message names; its fixture is
 // generated beside a link to the installed node_modules, so nothing is written into the installed runtime.
 // Needs the installed agent and show-me's Tier 1 build, so it is a proof script.   node proof/upgrade-probe.ts
+// Protocol 3 (fork-at-turn): this client names the conversation the thread shows, the root until the rewind and the fork
+// after it, as ThroughLine does. The installed old program speaks protocol 2, so steps 1 and 4 run only against an
+// install from before protocol 3; the probe's results for rounds 12 to 15 are recorded in their receipts.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,11 +31,13 @@ const OLD = join(oldDir, "old-bash-program.ts");
 writeFileSync(OLD, readFileSync(NEW, "utf8").replace('from "../../src/program.ts"', `from "${INSTALLED}/throughline/durable-agent/src/program.ts"`));
 
 type Entry = { id: number; model?: { role: string; content: unknown; toolName?: string }[] };
+// The conversation the thread shows: ThroughLine's record in the app, this variable here.
+let shown: number | undefined;
 const turn = async (program: AgentProgram, content: string, requestId: string) => {
-	const { submissionId } = (await program.call("submit", { content, requestId })) as { submissionId: number };
+	const { submissionId } = (await program.call("submit", { conversationId: shown ?? (await program.root()), content, requestId })) as { submissionId: number };
 	await program.call("wait", { submissionId });
 };
-const entries = async (program: AgentProgram) => ((await program.call("entries", { limit: 300 })) as { items: Entry[] }).items;
+const entries = async (program: AgentProgram) => ((await program.call("entries", { conversationId: shown ?? (await program.root()), limit: 300 })) as { items: Entry[] }).items;
 const lastBash = async (program: AgentProgram) =>
 	((await entries(program)).flatMap((e) => e.model ?? []).filter((m) => m.toolName === "bash").at(-1)?.content as { text: string }[] | undefined)?.map((c) => c.text).join("") ?? "";
 let serial = 0;
@@ -81,7 +86,7 @@ await run(
 		console.log(`new prompt path (store folder), inside the turn: ${await build(program, store, "New decision after upgrade.")}`);
 		await turn(program, "Withdrawn later.", "c");
 		const withdrawn = (await entries(program)).find((e) => e.model?.[0]?.content === "Withdrawn later.");
-		await program.call("forkBefore", { entryId: withdrawn?.id });
+		shown = ((await program.call("fork", { conversationId: shown ?? (await program.root()), before: String(withdrawn?.id) })) as { conversationId: number }).conversationId;
 		await turn(program, "Replacement after rewind.", "d");
 		console.log(`after a rewind, old body path: ${await build(program, join(store, "transcript.jsonl"), "Replacement after rewind.")}`);
 		console.log(`transcript.jsonl byte-unchanged by the new program: ${readFileSync(join(store, "transcript.jsonl"), "utf8") === before}`);

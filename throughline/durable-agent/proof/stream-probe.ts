@@ -19,8 +19,8 @@ program.onView((view) => {
 		`${Date.now() - t0}ms live=${Object.keys(live).join(",")} gen=${Object.keys(live.generation ?? {}).join(",")} partialChars=${chars} entries=${value.entries?.length} ops=${JSON.stringify(view.ops ?? null).length}`,
 	);
 });
-await program.call("watch");
-const { submissionId } = (await program.call("submit", {
+await program.call("watch", { conversationId: await program.root() });
+const { submissionId } = (await program.call("submit", { conversationId: await program.root(),
 	content: process.env.PROBE_PROMPT ?? "Count from 1 to 120, one number per line, each followed by one English word. No tools.",
 })) as { submissionId: number };
 await program.call("wait", { submissionId });

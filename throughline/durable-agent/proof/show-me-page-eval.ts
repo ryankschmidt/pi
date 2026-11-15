@@ -60,8 +60,12 @@ function layout() {
 	return { programDir, root, showMe: realpathSync(showMe) };
 }
 
+// The conversation the thread shows (ThroughLine's record in the app): the root until a rewind moves it to the fork.
+const shownBy = new WeakMap<AgentProgram, number>();
+const shown = async (program: AgentProgram) => shownBy.get(program) ?? (await program.root());
+
 async function turn(program: AgentProgram, content: string, id: string, ms: number) {
-	const { submissionId } = (await program.call("submit", { content, requestId: id })) as { submissionId: number };
+	const { submissionId } = (await program.call("submit", { conversationId: await shown(program), content, requestId: id })) as { submissionId: number };
 	return (await within(program.call("wait", { submissionId }), ms, `turn ${id} did not settle`)) as { status: string };
 }
 
@@ -96,12 +100,13 @@ async function run(model: string, index: number, rewound: boolean) {
 			await turn(program, WITHDRAWN, "withdrawn", 5 * 60_000);
 			const withdrawn = (await entries(program)).find((entry) => entry.kind === "pi.user" && JSON.stringify(entry.model).includes("Redis service for build caching"));
 			if (withdrawn === undefined) throw new Error("the withdrawn turn was not stored");
-			await program.call("forkBefore", { entryId: withdrawn.id });
+			const fork = (await program.call("fork", { conversationId: await shown(program), before: String(withdrawn.id) })) as { conversationId: number };
+			shownBy.set(program, fork.conversationId);
 		}
 		commandFrom = (await entries(program)).at(-1)?.id ?? 0;
-		const { submissionId } = (await program.call("submit", { content: COMMAND, requestId: "command" })) as { submissionId: number };
+		const { submissionId } = (await program.call("submit", { conversationId: await shown(program), content: COMMAND, requestId: "command" })) as { submissionId: number };
 		await Promise.race([program.call("wait", { submissionId }), publishedOnce, new Promise((resolve) => setTimeout(resolve, RUN_LIMIT_MS))]);
-		await within(program.call("abort"), 10_000, "abort").catch(() => undefined);
+		await within(program.call("abort", { conversationId: await shown(program) }), 10_000, "abort").catch(() => undefined);
 	} catch (caught) {
 		error = caught instanceof Error ? caught.message : String(caught);
 	}
@@ -171,12 +176,12 @@ async function run(model: string, index: number, rewound: boolean) {
 	};
 }
 
-/** Every entry the bound conversation shows, through the program's own entries call. */
+/** Every entry the shown conversation holds, through the program's own entries call. */
 async function entries(program: AgentProgram): Promise<Stored[]> {
 	const all: Stored[] = [];
 	let cursor: unknown;
 	do {
-		const page = (await within(program.call("entries", { limit: 100, ...(cursor === undefined ? {} : { cursor }) }), 30_000, "entries")) as { items: Stored[]; next?: unknown };
+		const page = (await within(program.call("entries", { conversationId: await shown(program), limit: 100, ...(cursor === undefined ? {} : { cursor }) }), 30_000, "entries")) as { items: Stored[]; next?: unknown };
 		all.push(...page.items);
 		cursor = page.next;
 	} while (cursor !== undefined && cursor !== null);

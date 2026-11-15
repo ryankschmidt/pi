@@ -4,6 +4,7 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { type AgentProgram, startProgram } from "../src/client.ts";
@@ -26,12 +27,13 @@ async function fresh() {
 	return { store: join(root, "store"), cwd: root };
 }
 type Stored = { id: number; kind: string; conversationId: number; model?: { role: string; content: unknown }[] };
-/** Every entry the bound conversation shows, through the program's own `entries` call (what ThroughLine reads). */
-async function storedEntries(program: AgentProgram): Promise<Stored[]> {
+/** Every entry a conversation shows (the root unless named), through the program's own `entries` call (what ThroughLine reads). */
+async function storedEntries(program: AgentProgram, conversationId?: number): Promise<Stored[]> {
 	const all: Stored[] = [];
+	const named = conversationId ?? (await program.root());
 	let cursor: unknown;
 	do {
-		const page = (await program.call("entries", { limit: 100, ...(cursor === undefined ? {} : { cursor }) })) as { items: Stored[]; next?: unknown };
+		const page = (await program.call("entries", { conversationId: named, limit: 100, ...(cursor === undefined ? {} : { cursor }) })) as { items: Stored[]; next?: unknown };
 		all.push(...page.items);
 		cursor = page.next;
 	} while (cursor !== undefined && cursor !== null);
@@ -47,8 +49,8 @@ const startBash = (store: string, cwd: string) => {
 	started.push(program);
 	return program;
 };
-async function turn(program: AgentProgram, content: string, requestId: string): Promise<void> {
-	const { submissionId } = (await program.call("submit", { content, requestId })) as { submissionId: number };
+async function turn(program: AgentProgram, content: string, requestId: string, conversationId?: number): Promise<void> {
+	const { submissionId } = (await program.call("submit", { conversationId: conversationId ?? (await program.root()), content, requestId })) as { submissionId: number };
 	const settled = (await program.call("wait", { submissionId })) as { status: string };
 	assert.equal(settled.status, "done", program.stderr());
 }
@@ -68,12 +70,14 @@ test("hello carries the protocol, engine, version, store, agent and pid; a call 
 	assert.equal(hello.store, store);
 	assert.equal(hello.agent, "test-agent");
 	assert.equal(hello.pid, program.child.pid);
-	const { submissionId } = (await program.call("submit", { content: "go", requestId: "r1" })) as {
+	assert.equal(typeof hello.rootConversationId, "number");
+	const conversationId = hello.rootConversationId;
+	const { submissionId } = (await program.call("submit", { conversationId, content: "go", requestId: "r1" })) as {
 		submissionId: number;
 	};
 	const settled = (await program.call("wait", { submissionId })) as { status: string };
 	assert.equal(settled.status, "done");
-	const again = (await program.call("submit", { content: "go", requestId: "r1" })) as { submissionId: number };
+	const again = (await program.call("submit", { conversationId, content: "go", requestId: "r1" })) as { submissionId: number };
 	assert.equal(again.submissionId, submissionId, "the same requestId returns the same submission");
 	await program.call("drain");
 	assert.equal(await program.exited, 0);
@@ -102,7 +106,7 @@ test("after a kill the next program takes the store", async () => {
 	const { store, cwd } = await fresh();
 	const first = start(store, cwd);
 	await first.hello;
-	const { submissionId } = (await first.call("submit", { content: "one", requestId: "a" })) as {
+	const { submissionId } = (await first.call("submit", { conversationId: await first.root(), content: "one", requestId: "a" })) as {
 		submissionId: number;
 	};
 	await first.call("wait", { submissionId });
@@ -110,7 +114,7 @@ test("after a kill the next program takes the store", async () => {
 	await first.exited;
 	const second = start(store, cwd);
 	await second.hello;
-	const next = (await second.call("submit", { content: "two", requestId: "b" })) as { submissionId: number };
+	const next = (await second.call("submit", { conversationId: await second.root(), content: "two", requestId: "b" })) as { submissionId: number };
 	await second.call("wait", { submissionId: next.submissionId });
 	const ids = (await storedEntries(second)).map((entry) => entry.id);
 	assert.deepEqual(ids, [...new Set(ids)].sort((a, b) => a - b), "each entry once, in id order");
@@ -128,7 +132,7 @@ test("a ThroughLine tool call leaves on the link with the stock tool name and it
 		program.answerTool(call.id, { content: [{ type: "text", text: "task-1 is completed" }] });
 	});
 	await program.hello;
-	const { submissionId } = (await program.call("submit", { content: "check", requestId: "t1" })) as {
+	const { submissionId } = (await program.call("submit", { conversationId: await program.root(), content: "check", requestId: "t1" })) as {
 		submissionId: number;
 	};
 	const settled = (await program.call("wait", { submissionId })) as { status: string };
@@ -176,7 +180,7 @@ async function readOwner(store: string): Promise<Stored[]> {
 const STORE_FILES = ["owner.lock", "owner-reads.v1", "store.sqlite", "store.sqlite-wal", "store.sqlite-shm"];
 
 // Design brief 5, note B (build rounds 12 and 13): the agent answers reads on a socket its owner record names; each
-// connection carries one request; a read is fixed to the bound conversation and its last entry at the first page.
+// connection carries one request; a read is fixed to the named conversation and its last entry at the first page.
 test("the read socket serves the live branch the link shows; after a rewind a read shows the new branch; a read continued across the rewind is refused", async () => {
 	const { store, cwd } = await fresh();
 	const program = startBash(store, cwd);
@@ -188,10 +192,10 @@ test("the read socket serves the live branch the link shows; after a rewind a re
 	assert.deepEqual((await readOwner(store)).map((entry) => entry.id), (await storedEntries(program)).map((entry) => entry.id), "the socket's entries equal the link's");
 	const withdrawn = (await storedEntries(program)).find((entry) => userText(entry) === "Withdrawn choice.");
 	assert.ok(withdrawn);
-	await program.call("forkBefore", { entryId: withdrawn.id });
-	await turn(program, "Replacement choice.", "c");
+	const fork = (await program.call("fork", { conversationId: await program.root(), before: String(withdrawn.id) })) as { conversationId: number };
+	await turn(program, "Replacement choice.", "c", fork.conversationId);
 	const live = await readOwner(store);
-	assert.deepEqual(live.map((entry) => entry.id), (await storedEntries(program)).map((entry) => entry.id));
+	assert.deepEqual(live.map((entry) => entry.id), (await storedEntries(program, fork.conversationId)).map((entry) => entry.id));
 	assert.deepEqual(live.filter((entry) => entry.kind === "pi.user").map(userText), ["Retained choice.", "Replacement choice."]);
 	const continued = await ask(store, { conversationId: first.value?.conversationId, lastEntryId: first.value?.lastEntryId, after: 0 });
 	assert.equal(continued.code, "REWOUND", "a read begun before the rewind cannot finish with the withdrawn branch");
@@ -232,6 +236,8 @@ test("the first start marks the store for good; after a kill the stale socket do
 	const second = startBash(store, cwd);
 	await second.hello;
 	assert.notEqual((await ownerRecord(store)).reads?.socket, stale);
+	assert.equal((await ask(store)).code, "NOT_ADDRESSED", "a restarted program reads nothing until ThroughLine names the conversation");
+	await storedEntries(second);
 	assert.ok((await readOwner(store)).some((entry) => userText(entry) === "Before the kill."));
 	const current = (await ownerRecord(store)).reads?.socket;
 	await second.call("drain");
@@ -315,6 +321,72 @@ test("an upgraded store's transcript.jsonl is left untouched by the new program"
 	await program.call("drain");
 	await program.exited;
 });
+
+// Protocol 3 (fork-at-turn design, section D): the program keeps no binding. Every conversation-scoped call names its
+// conversation; a forgotten or unknown one is refused and creates nothing; a protocol-2 client is refused.
+test("protocol 3: a protocol-2 client is refused; a call without a conversation or naming an unknown one is refused and creates nothing", async () => {
+	const { store, cwd } = await fresh();
+	const old = start(store, cwd, 2);
+	await old.hello;
+	assert.equal(await old.exited, 4, "a protocol-2 client is refused");
+	const program = start(store, cwd);
+	const root = await program.root();
+	const before = (await program.call("status")) as { rootConversationId: number };
+	assert.equal(before.rootConversationId, root);
+	await assert.rejects(program.call("submit", { content: "lost", requestId: "x" }), /CONVERSATION_REQUIRED/);
+	for (const [method, params] of [
+		["watch", {}],
+		["submit", { content: "lost", requestId: "y" }],
+		["fork", { before: "1" }],
+	] as const) {
+		await assert.rejects(program.call(method, { ...params, conversationId: root + 40 }), /CONVERSATION_MISSING/, method);
+	}
+	assert.deepEqual(await storedEntries(program), [], "nothing reached the root");
+	await program.call("drain");
+	await program.exited;
+	assert.equal(conversationCount(store), 1, "no conversation was created");
+});
+
+test("submit returns the placed user entry, equal to its settled record's; a fork made by a rewind survives a kill and the root is untouched", async () => {
+	const { store, cwd } = await fresh();
+	const first = start(store, cwd);
+	const root = await first.root();
+	const placed = (await first.call("submit", { conversationId: root, content: "one", requestId: "a" })) as { submissionId: number; entry?: number };
+	const settled = (await first.call("wait", { submissionId: placed.submissionId })) as { entry?: number };
+	assert.equal(typeof placed.entry, "number");
+	assert.equal(placed.entry, settled.entry, "the entry submit returned is the one the store settled");
+	await turn(first, "two", "b");
+	const rootIds = (await storedEntries(first)).map((entry) => entry.id);
+	const second = (await storedEntries(first)).find((entry) => userText(entry) === "two");
+	assert.ok(second);
+	const fork = (await first.call("fork", { conversationId: root, before: String(second.id) })) as { conversationId: number; parent: { conversationId: number; at: number }; head: number };
+	assert.equal(fork.parent.conversationId, root);
+	assert.ok(fork.parent.at < second.id && fork.head === fork.parent.at, "the fork ends just before the cut message");
+	first.kill();
+	await first.exited;
+	const restarted = start(store, cwd);
+	await restarted.hello;
+	await turn(restarted, "three", "c", fork.conversationId);
+	assert.deepEqual(
+		(await storedEntries(restarted, fork.conversationId)).filter((entry) => entry.kind === "pi.user").map(userText),
+		["one", "three"],
+		"the fork serves after a restart, with the cut message gone",
+	);
+	assert.deepEqual((await storedEntries(restarted)).map((entry) => entry.id), rootIds, "the root is untouched");
+	await restarted.call("drain");
+	await restarted.exited;
+	assert.equal(conversationCount(store), 2);
+});
+
+/** How many conversations the store holds, read after the program stopped. */
+function conversationCount(store: string): number {
+	const db = new DatabaseSync(join(store, "store.sqlite"), { readOnly: true });
+	try {
+		return Number((db.prepare("select count(*) as n from conversations").get() as { n: number }).n);
+	} finally {
+		db.close();
+	}
+}
 
 /** A minimal reader of the owner socket, run by the scripted model as a skill body would run show-me. */
 const READ_OWNER_SCRIPT = `import { readFileSync } from "node:fs";

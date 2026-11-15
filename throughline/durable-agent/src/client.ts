@@ -1,5 +1,5 @@
-// A small client of the agent program, used by the tests and the kill proof. ThroughLine's Durable client (build 2)
-// speaks the same messages from the ThroughLine fork.
+// A small client of the agent program, used by the tests and the proof scripts. ThroughLine's Durable client speaks the
+// same messages from the ThroughLine fork, naming the conversation its thread shows on every conversation-scoped call.
 
 import { type ChildProcess, spawn } from "node:child_process";
 import {
@@ -31,6 +31,8 @@ export type AgentProgram = {
 	readonly hello: Promise<Hello>;
 	readonly exited: Promise<number | null>;
 	readonly stderr: () => string;
+	/** The store's root conversation from the hello; conversation-scoped calls name it (or a fork) in `conversationId`. */
+	root(): Promise<number>;
 	call(method: Method, params?: Record<string, unknown>): Promise<unknown>;
 	onView(listener: (view: View) => void): void;
 	onQuestion(listener: (question: Question["question"]) => void): void;
@@ -111,6 +113,7 @@ export function startProgram(
 		hello,
 		exited,
 		stderr: () => errors,
+		root: async () => Number((await hello).rootConversationId),
 		call(method, params) {
 			const id = `c${++serial}`;
 			const call: Call = { kind: "call", id, method, ...(params === undefined ? {} : { params }) };

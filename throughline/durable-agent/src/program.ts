@@ -25,19 +25,22 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { Binding } from "./binding.ts";
 import { carrySession } from "./carry.ts";
 import { lockStore, markStore, StoreAlreadyOwned, type StoreLock } from "./lock.ts";
-import { type BoundNow, type OwnerReads, serveOwnerReads } from "./owner-read.ts";
+import { type AddressedNow, type OwnerReads, serveOwnerReads } from "./owner-read.ts";
 import { reapLeftovers, startReaper } from "./reaper.ts";
 import {
 	type Call,
+	CONVERSATION_METHODS,
 	ENGINE,
 	encode,
-	type Hello,
 	isClientMessage,
 	lineSplitter,
 	METHODS,
+	type Method,
 	PROTOCOL_VERSION,
 	type ProgramMessage,
+	Refused,
 } from "./protocol.ts";
+import { rewind } from "./rewind.ts";
 import type { ApprovalAnswer, Approvals, RuntimeMode, ToolLink } from "./throughline-extensions.ts";
 
 export const DURABLE_VERSION: string = (() => {
@@ -78,7 +81,7 @@ export type ProgramOptions = {
 	approvals?: Approvals;
 	/** ThroughLine's tools: their calls leave on this link as `tool` messages and return as `toolResult`. */
 	tools?: ToolLink;
-	/** A stock Pi session file to carry into the bound conversation before resuming (see carry.ts). */
+	/** A stock Pi session file to carry into the root conversation before resuming (see carry.ts). */
 	carryFrom?: string;
 	/** Kill commands an earlier killed program left running, and watch this one's (see reaper.ts). */
 	reap?: boolean;
@@ -143,10 +146,10 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 	 * The read socket is an add-on: if it cannot be created the agent runs on, the owner record says reads are unavailable
 	 * and why (show-me refuses with that reason instead of reading anything), the thread's prompt says so, and it is logged.
 	 */
-	async function startReads(bound: BoundNow): Promise<OwnerReads | undefined> {
+	async function startReads(addressed: AddressedNow): Promise<OwnerReads | undefined> {
 		let started: OwnerReads | undefined;
 		try {
-			started = await serveOwnerReads(options.storeDir, bound, context);
+			started = await serveOwnerReads(options.storeDir, addressed, context);
 			await lock.setReads({ state: "ready", socket: started.socket });
 			return started;
 		} catch (error) {
@@ -171,39 +174,28 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		if (binding?.agentId != null && binding.agentId !== options.agentId) {
 			throw new Error(`STORE_BINDING_MISMATCH: store belongs to agent ${binding.agentId}`);
 		}
-		// A rewind never waits on a read (owner-read.ts): the rebind generation is odd while a rebind runs and moves on at its
-		// start and end; reads in flight are abandoned with REWOUND, and a read whose generation moved is never answered.
+		const root = await opened.root(context, {
+			agent: options.initialAgent,
+			init: async (tx) => {
+				(await tx.doc(Binding)).agentId = options.agentId;
+			},
+		});
+		// Which conversation the thread shows is ThroughLine's record; the program only follows, in memory, the conversation
+		// its client last named, for the read socket: a cache refreshed on every named call, never a second record. A read never waits on a change of it (owner-read.ts): the generation moves at each
+		// change, reads in flight are abandoned with REWOUND, and a read whose generation moved is never answered. Nothing
+		// is followed until the client names a conversation, so a restarted program never guesses the root.
 		let generation = 0;
-		const rebind = async (next: Conversation) => {
-			generation++;
+		let followed: Conversation | undefined;
+		const follow = (next: Conversation) => {
+			if (followed?.id === next.id) return;
+			generation += 1;
 			reads?.abandon();
-			try {
-				await bind(next.id);
-				conversation = next;
-			} finally {
-				generation++;
-			}
+			followed = next;
 		};
-		let conversation: Conversation;
-		if (binding?.conversationId != null) {
-			const found = await opened.conversation(binding.conversationId as ConversationId, context);
-			if (found === undefined) throw new Error("BOUND_CONVERSATION_MISSING");
-			conversation = found;
-		} else {
-			conversation = await opened.root(context, { agent: options.initialAgent });
-			await bind(conversation.id);
-		}
-		async function bind(id: ConversationId) {
-			await opened.commit(async (tx) => {
-				const stored = await tx.doc(Binding);
-				stored.agentId = options.agentId;
-				stored.conversationId = id;
-			}, context);
-		}
 		// Before resume and before carrying: the socket is serving (or recorded unavailable) before anything else can fail late.
-		reads = await startReads({ generation: () => generation, conversation: () => conversation });
+		reads = await startReads({ generation: () => generation, conversation: () => followed });
 		if (options.carryFrom !== undefined) {
-			const summary = await carrySession(opened, conversation, options.carryFrom, options.storeDir, context);
+			const summary = await carrySession(opened, root, options.carryFrom, options.storeDir, context);
 			log(`carried ${JSON.stringify(summary.carried)} from ${summary.path} (${summary.alreadyCarried} already carried)`);
 		}
 		const approvals = options.approvals;
@@ -211,16 +203,15 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 			const stored = await opened.snapshot(SessionApprovals, context);
 			for (const tool of stored?.tools ?? []) approvals.allowForSession(tool);
 		}
-		const helloFor = (shown: Conversation): Hello => ({
-			kind: "hello",
-			protocol: PROTOCOL_VERSION,
-			engine: ENGINE,
-			version: DURABLE_VERSION,
-			store: options.storeDir,
-			agent: options.agentId,
-			pid: process.pid,
-			conversationId: Number(shown.id),
-		});
+		/** The conversation a conversation-scoped call names; never the root by default, never created by a call. */
+		const named = async (params: Record<string, unknown>): Promise<Conversation> => {
+			const id = params.conversationId;
+			// Wire input: a forgotten parameter must not act on the root silently.
+			if (typeof id !== "number" || !Number.isSafeInteger(id)) throw new Refused("CONVERSATION_REQUIRED", "name the conversation in params.conversationId");
+			const found = await opened.conversation(id as ConversationId, context);
+			if (found === undefined) throw new Refused("CONVERSATION_MISSING", `this store has no conversation ${id}`);
+			return found;
+		};
 		const readEntries = (shown: Conversation, params: Record<string, unknown>) =>
 			shown.entries(
 				{
@@ -237,20 +228,32 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 		await markStore(options.storeDir);
 		opened.resume();
 
-		send(helloFor(conversation));
+		send({
+			kind: "hello",
+			protocol: PROTOCOL_VERSION,
+			engine: ENGINE,
+			version: DURABLE_VERSION,
+			store: options.storeDir,
+			agent: options.agentId,
+			pid: process.pid,
+			rootConversationId: Number(root.id),
+		});
 		approvals?.connect((question) => send({ kind: "question", question }));
 		options.tools?.connect((call) => send({ kind: "tool", ...call }));
 
-		// A rewind moves the thread to another conversation; its watches end and the client opens new ones.
-		async function stopWatches() {
-			for (const watch of watches.values()) await watch.stop().catch(() => undefined);
-			watches.clear();
-		}
 		let greeted = false;
 		let watchSerial = 0;
 		const handle = async (call: Call): Promise<unknown> => {
 			const params = call.params ?? {};
-			switch (call.method) {
+			if (!CONVERSATION_METHODS.includes(call.method)) return await handleStoreWide(call.method, params);
+			const conversation = await named(params);
+			follow(conversation);
+			return await handleConversation(call.method, conversation, params);
+		};
+
+		/** A call on the conversation the client named. */
+		const handleConversation = async (method: Method, conversation: Conversation, params: Record<string, unknown>): Promise<unknown> => {
+			switch (method) {
 				case "submit": {
 					const draft = (
 						params.type === "continue"
@@ -264,12 +267,10 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 								}
 					) as SubmissionDraft;
 					const submission = await conversation.submit(draft, context);
-					return { submissionId: submission.id };
-				}
-				case "wait": {
-					const submission = await opened.submission(params.submissionId as SubmissionId, context);
-					if (submission === undefined) throw new Error("SUBMISSION_NOT_FOUND");
-					return await submission.wait(context);
+					// An idle input is placed in its admitting commit: the client learns the turn's user entry, its rewind point,
+					// before any view, so a run cut off by a restart already carries it. Queued input has none yet.
+					const record = await submission.status(context);
+					return { submissionId: submission.id, ...(record.entry === undefined ? {} : { entry: Number(record.entry) }) };
 				}
 				case "abort":
 					await conversation.abort(context);
@@ -287,14 +288,13 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 					return { taskId };
 				}
 				case "fork": {
-					const fork = await conversation.fork(
-						params.entryId as EntryId,
-						{ ownership: { kind: "ownerless" } },
-						context,
-					);
-					await rebind(fork);
-					await stopWatches();
-					return { conversationId: fork.id };
+					// Wire input: the turn ref ThroughLine recorded for the first turn to cut, verbatim.
+					if (typeof params.before !== "string") throw new Refused("REWIND_POINT_REQUIRED", "name the first turn to cut in params.before");
+					const forked = await rewind(opened, conversation, params.before, context);
+					// The client moves its thread to the fork with this answer; reads follow it at once.
+					const fork = await named({ conversationId: forked.conversationId });
+					follow(fork);
+					return forked;
 				}
 				case "watch": {
 					const id = `w${++watchSerial}`;
@@ -306,21 +306,46 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 					});
 					return { watch: id };
 				}
+				case "entries":
+					return await readEntries(conversation, params);
+				case "configure": {
+					if (approvals && typeof params.runtimeMode === "string") approvals.mode = params.runtimeMode as RuntimeMode;
+					const change: { model?: { provider: string; modelId: string }; thinkingLevel?: string; instructions?: string } = {};
+					if (typeof params.model === "string") {
+						const slash = params.model.indexOf("/");
+						if (slash <= 0) throw new Error(`MODEL_NOT_PROVIDER_SLASH_MODEL: ${params.model}`);
+						change.model = { provider: params.model.slice(0, slash), modelId: params.model.slice(slash + 1) };
+					}
+					if (typeof params.thinkingLevel === "string") change.thinkingLevel = params.thinkingLevel;
+					if (typeof params.instructions === "string") change.instructions = params.instructions;
+					if (Object.keys(change).length > 0) await conversation.configure(change as AgentChange, context);
+					const agent = await conversation.agent(context);
+					return { model: agent.model ?? null, thinkingLevel: agent.thinkingLevel };
+				}
+			}
+		};
+
+		/** A call on the store as a whole. */
+		const handleStoreWide = async (method: Method, params: Record<string, unknown>): Promise<unknown> => {
+			switch (method) {
+				case "wait": {
+					const submission = await opened.submission(params.submissionId as SubmissionId, context);
+					if (submission === undefined) throw new Error("SUBMISSION_NOT_FOUND");
+					return await submission.wait(context);
+				}
 				case "unwatch": {
 					const watch = watches.get(String(params.watch));
 					watches.delete(String(params.watch));
 					await watch?.stop();
 					return { stopped: watch !== undefined };
 				}
-				case "entries":
-					return await readEntries(conversation, params);
 				case "abortTask":
 					return { state: await opened.abortTask(params.taskId as TaskId, context) };
 				case "status": {
 					const inspection = await opened.inspect(context);
 					return {
 						wake: opened.wake(),
-						conversationId: conversation.id,
+						rootConversationId: Number(root.id),
 						scheduling: inspection.scheduling,
 						liveTasks: inspection.tasks.length,
 						openSubmissions: inspection.submissions.length,
@@ -339,49 +364,6 @@ export async function runProgram(options: ProgramOptions): Promise<number> {
 						}, context);
 					}
 					return { matched };
-				}
-				case "configure": {
-					if (approvals && typeof params.runtimeMode === "string") approvals.mode = params.runtimeMode as RuntimeMode;
-					const change: { model?: { provider: string; modelId: string }; thinkingLevel?: string; instructions?: string } = {};
-					if (typeof params.model === "string") {
-						const slash = params.model.indexOf("/");
-						if (slash <= 0) throw new Error(`MODEL_NOT_PROVIDER_SLASH_MODEL: ${params.model}`);
-						change.model = { provider: params.model.slice(0, slash), modelId: params.model.slice(slash + 1) };
-					}
-					if (typeof params.thinkingLevel === "string") change.thinkingLevel = params.thinkingLevel;
-					if (typeof params.instructions === "string") change.instructions = params.instructions;
-					if (Object.keys(change).length > 0) await conversation.configure(change as AgentChange, context);
-					const agent = await conversation.agent(context);
-					return { model: agent.model ?? null, thinkingLevel: agent.thinkingLevel };
-				}
-				case "forkBefore": {
-					// A rewind to just before an entry: fork at the entry before it, or start an empty conversation
-					// when it was the first. The thread then shows the new conversation; nothing is deleted.
-					const page = await conversation.entries(
-						{ order: "descending", maxEntryId: (Number(params.entryId) - 1) as EntryId },
-						1,
-						undefined,
-						context,
-					);
-					const previous = page.items[0];
-					const agent = await conversation.agent(context);
-					const next =
-						previous === undefined
-							? await opened.createConversation(
-									{
-										ownership: { kind: "ownerless" },
-										agent: {
-											...options.initialAgent,
-											...(agent.model === undefined ? {} : { model: agent.model }),
-											thinkingLevel: agent.thinkingLevel,
-										},
-									},
-									context,
-								)
-							: await conversation.fork(previous.id, { ownership: { kind: "ownerless" } }, context);
-					await rebind(next);
-					await stopWatches();
-					return { conversationId: next.id, at: previous?.id ?? null };
 				}
 			}
 		};

@@ -1943,7 +1943,9 @@
           "throughline/durable-agent/test/show-me-score.test.ts",
           "throughline/durable-agent/src/owner-read.ts",
           "throughline/durable-agent/test/fixtures/faux-bash-program.ts",
-          "throughline/durable-agent/test/owner-read.test.ts"
+          "throughline/durable-agent/test/owner-read.test.ts",
+          "throughline/durable-agent/src/rewind.ts",
+          "throughline/durable-agent/test/rewind.test.ts"
         ]
       }
     ]

@@ -234,18 +234,20 @@ function layout(port: number, options: { images: Images; sameNamedShowMe?: boole
 	return { start, cwd, showMe, root, claude };
 }
 
-async function turn(program: AgentProgram, content: string, requestId: string): Promise<string> {
-	const { submissionId } = (await program.call("submit", { content, requestId })) as { submissionId: number };
+
+async function turn(program: AgentProgram, content: string, requestId: string, conversationId?: number): Promise<string> {
+	const { submissionId } = (await program.call("submit", { conversationId: conversationId ?? (await program.root()), content, requestId })) as { submissionId: number };
 	return ((await program.call("wait", { submissionId })) as { status: string }).status;
 }
 
 type Stored = { kind: string; id: number; model?: { role: string; content: unknown; sections?: Record<string, string | null> }[] };
-/** The entries the bound conversation shows, through the program's own `entries` call: what ThroughLine reads. */
-async function storedEntries(program: AgentProgram): Promise<Stored[]> {
+/** The entries a conversation shows (the root unless named), through the program's own `entries` call: what ThroughLine reads. */
+async function storedEntries(program: AgentProgram, conversationId?: number): Promise<Stored[]> {
 	const all: Stored[] = [];
+	const named = conversationId ?? (await program.root());
 	let cursor: unknown;
 	do {
-		const page = (await program.call("entries", { limit: 100, ...(cursor === undefined ? {} : { cursor }) })) as { items: Stored[]; next?: unknown };
+		const page = (await program.call("entries", { conversationId: named, limit: 100, ...(cursor === undefined ? {} : { cursor }) })) as { items: Stored[]; next?: unknown };
 		all.push(...page.items);
 		cursor = page.next;
 	} while (cursor !== undefined && cursor !== null);
@@ -358,9 +360,10 @@ test("a command's skill body is the read result stored in its run: replayed unch
 	assert.doesNotMatch(resent, /BODY-AFTER-EDIT/);
 	assert.equal(userTexts(model.bodies.at(-1) as RequestBody)[0], "/show-me the plan");
 
-	const answer = (await storedEntries(second)).find((entry) => entry.kind === "pi.assistant" && JSON.stringify(entry.model).includes("shown"));
-	await second.call("fork", { entryId: answer?.id });
-	assert.equal(await turn(second, "in the fork", "k3"), "done", second.stderr());
+	// A rewind cuts "and now?", so the fork ends at the stored answer before it.
+	const cut = (await storedEntries(second)).find((entry) => entry.kind === "pi.user" && JSON.stringify(entry.model).includes("and now?"));
+	const fork = (await second.call("fork", { conversationId: await second.root(), before: String(cut?.id) })) as { conversationId: number };
+	assert.equal(await turn(second, "in the fork", "k3", fork.conversationId), "done", second.stderr());
 	const forked = JSON.stringify(model.bodies.at(-1)?.messages);
 	assert.match(forked, /BODY-AS-READ/, "the fork resends the stored read result");
 	assert.doesNotMatch(forked, /BODY-AFTER-EDIT/);

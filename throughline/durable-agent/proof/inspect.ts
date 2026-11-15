@@ -15,11 +15,11 @@ program.onView((v) => {
 try {
 	console.log(JSON.stringify({ hello: await program.hello }));
 	console.log(JSON.stringify({ status: await program.call("status") }));
-	await program.call("watch");
+	await program.call("watch", { conversationId: await program.root() });
 	await new Promise((r) => setTimeout(r, 300));
 	const docs = (view as { docs?: Record<string, unknown> })?.docs ?? {};
 	console.log(JSON.stringify({ live: docs["pi.live"], inbox: docs["pi.inbox"] }).slice(0, 3000));
-	const page = (await program.call("entries", { limit: 200 })) as { items: { id: number; kind: string; model?: unknown[] }[] };
+	const page = (await program.call("entries", { conversationId: await program.root(), limit: 200 })) as { items: { id: number; kind: string; model?: unknown[] }[] };
 	for (const entry of page.items) console.log(JSON.stringify(entry).slice(0, 600));
 	await program.call("drain");
 } finally {

@@ -64,12 +64,12 @@ async function run(model: string, testCase: Case, index: number) {
 	let error: string | undefined;
 	try {
 		await within(program.hello, 60_000, "no hello within 60 s");
-		const { submissionId } = (await program.call("submit", { content: testCase.text, requestId: `e${index}` })) as { submissionId: number };
+		const { submissionId } = (await program.call("submit", { conversationId: await program.root(), content: testCase.text, requestId: `e${index}` })) as { submissionId: number };
 		const settled = program.call("wait", { submissionId });
 		// The first stored answer decides: its first tool call, or none. Stop the run there to keep runs short.
 		while (first === undefined && Date.now() - started < 240_000) {
 			await new Promise((resolve) => setTimeout(resolve, 400));
-			const page = (await program.call("entries", { limit: 100 })) as { items: { kind?: string; model?: { content?: unknown }[] }[] };
+			const page = (await program.call("entries", { conversationId: await program.root(), limit: 100 })) as { items: { kind?: string; model?: { content?: unknown }[] }[] };
 			for (const entry of page.items) {
 				if (entry.kind !== "pi.assistant") continue;
 				const content = (entry.model?.[0]?.content ?? []) as { type: string; name?: string; arguments?: { path?: string } }[];
@@ -78,7 +78,7 @@ async function run(model: string, testCase: Case, index: number) {
 				break;
 			}
 		}
-		await within(program.call("abort"), 10_000, "abort").catch(() => undefined);
+		await within(program.call("abort", { conversationId: await program.root() }), 10_000, "abort").catch(() => undefined);
 		await Promise.race([settled.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 5_000))]);
 	} catch (caught) {
 		error = caught instanceof Error ? caught.message : String(caught);

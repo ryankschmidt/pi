@@ -31,7 +31,7 @@ program.onQuestion((question) => {
 	void program.call("answer", { key: question.key, answer });
 });
 const run = async (text: string) => {
-	const { submissionId } = (await program.call("submit", {
+	const { submissionId } = (await program.call("submit", { conversationId: await program.root(),
 		content: text,
 		requestId: `smoke-${Date.now()}`,
 	})) as { submissionId: number };
@@ -40,7 +40,7 @@ const run = async (text: string) => {
 await run("Run exactly this bash command once: echo approved >> smoke.txt. Then say done.");
 answer = "decline";
 await run("Run exactly this bash command once: echo declined >> smoke.txt. Then say done.");
-const entries = (await program.call("entries", { limit: 200 })) as {
+const entries = (await program.call("entries", { conversationId: await program.root(), limit: 200 })) as {
 	items: { kind: string; data?: unknown; model?: unknown }[];
 };
 const file = (() => {

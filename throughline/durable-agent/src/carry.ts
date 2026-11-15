@@ -9,31 +9,9 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Context } from "@earendil-works/chord";
-import {
-	type ContextEdit,
-	type Conversation,
-	defineDoc,
-	type EntryDraft,
-	type EntryId,
-	type Harness,
-} from "@earendil-works/pi-durable";
-
-/** What has been carried into this store, kept in the store itself. */
-export const CarriedDoc = defineDoc<CarriedState>({
-	kind: "throughline.carried-from",
-	version: 1,
-	scope: "session",
-	checkpointWhen: () => true,
-	initial: () => ({ path: null, lastSourceId: null, ids: {} }),
-});
-
-export type CarriedState = {
-	path: string | null;
-	/** Id of the last stock entry carried; a re-carry starts after it. */
-	lastSourceId: string | null;
-	/** Stock entry id to Durable entry id, for context edits that target earlier entries. */
-	ids: Record<string, number>;
-};
+import type { ContextEdit, Conversation, EntryDraft, EntryId, Harness } from "@earendil-works/pi-durable";
+// The carried-ids document is owned by its reader, the rewind, which keeps reading stock-era turn refs after carrying ends.
+import { CarriedDoc } from "./rewind.ts";
 
 export type CarrySummary = {
 	path: string;
