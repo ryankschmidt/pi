@@ -397,11 +397,11 @@ async function submitOnly(program: AgentProgram, content: string, requestId: str
 }
 const witnessLines = async (cwd: string) =>
 	existsSync(join(cwd, "witness.txt")) ? (await readFile(join(cwd, "witness.txt"), "utf8")).split("\n").filter(Boolean) : [];
-/** The store's tool tasks, read after the program stopped. */
+/** The store's tool tasks, read after the program stopped. The store keeps each task kind JSON-encoded. */
 function toolTasks(store: string): { status: string; restarts: number }[] {
 	const db = new DatabaseSync(join(store, "store.sqlite"), { readOnly: true });
 	try {
-		const rows = db.prepare("select status, record from tasks where kind = 'pi.tool' order by id").all() as { status: string; record: string }[];
+		const rows = db.prepare("select status, record from tasks where kind = json_quote('pi.tool') order by id").all() as { status: string; record: string }[];
 		return rows.map((row) => ({ status: row.status, restarts: (JSON.parse(row.record) as { restarts?: number }).restarts ?? 0 }));
 	} finally {
 		db.close();
