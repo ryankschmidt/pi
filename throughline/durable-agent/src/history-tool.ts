@@ -55,7 +55,7 @@ export function createHistoryExtension(): Extension {
 						const marker = await tx.latestHeadMarker(api.conversationId);
 						return { entries: all, activeFrom: marker?.head as number | undefined };
 					}, context);
-					const wire = entries as unknown as WireEntry[];
+					const wire: readonly WireEntry[] = entries;
 					const reset = lastReset(wire);
 					const page = searchHistory(wire, input as HistoryQuery, {
 						...(activeFrom === undefined ? {} : { activeFrom }),
