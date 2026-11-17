@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
+import { withPinnedClaudeCodeVersion } from "./claude-code-version.ts";
 import { claudeStandardPromptAtStart } from "./claude-standard-prompt.ts";
 import { SEARCH_HISTORY_TOOL } from "./history.ts";
 import { createHistoryExtension } from "./history-tool.ts";
@@ -75,6 +76,9 @@ if (!standard.ok) {
 }
 log(`claude standard prompt: claude ${standard.claude_version} sha ${standard.sha256.slice(0, 12)}`);
 const claudeStandard = standard.extension;
+// Claude requests announce the pinned Claude Code, the one the standard prompt came from, not Pi's built-in version.
+const announced = withPinnedClaudeCodeVersion(models, standard.claude_version);
+log(announced.log);
 const envs = new ExecutionEnvs(cwd);
 const initial = initialModel(settings, models, values.model);
 const approvals = new Approvals();
@@ -126,7 +130,7 @@ const code = await runProgram({
 		...(initial.model === undefined ? {} : { model: initial.model }),
 		...(initial.thinkingLevel === undefined ? {} : { thinkingLevel: initial.thinkingLevel }),
 	},
-	harness: { models, registry, settings: harnessSettings(settings), env: envs.env },
+	harness: { models: announced.models, registry, settings: harnessSettings(settings), env: envs.env },
 	approvals,
 	tools: {
 		link: toolLink,

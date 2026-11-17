@@ -2117,7 +2117,9 @@
           "throughline/durable-agent/src/history-tool.ts",
           "throughline/durable-agent/test/history.test.ts",
           "throughline/durable-agent/test/fixtures/real-store-compacted.json",
-          "throughline/durable-agent/test/fixtures/faux-approvals-program.ts"
+          "throughline/durable-agent/test/fixtures/faux-approvals-program.ts",
+          "throughline/durable-agent/src/claude-code-version.ts",
+          "throughline/durable-agent/test/claude-code-version.test.ts"
         ]
       }
     ]

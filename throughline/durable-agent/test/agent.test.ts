@@ -99,14 +99,16 @@ async function modelEndpoint(replies: Reply[] | ((body: RequestBody) => Reply)) 
 
 type AnthropicBody = { model: string; system?: { text: string }[]; messages: { role: string; content: unknown }[]; tools?: { name: string }[] };
 
-/** A local Anthropic Messages endpoint: answers every request with `reply`, or with what `reply` returns for the body, and records bodies. */
+/** A local Anthropic Messages endpoint: answers every request with `reply`, or with what `reply` returns for the body, and records bodies and headers. */
 async function anthropicEndpoint(reply: string | ((body: AnthropicBody) => Reply)) {
 	const bodies: AnthropicBody[] = [];
+	const headers: NodeJS.Dict<string | string[]>[] = [];
 	const server = createServer((req, res) => {
 		if (req.method !== "POST") {
 			res.writeHead(404).end();
 			return;
 		}
+		headers.push(req.headers);
 		let raw = "";
 		req.on("data", (chunk) => {
 			raw += chunk;
@@ -132,7 +134,7 @@ async function anthropicEndpoint(reply: string | ((body: AnthropicBody) => Reply
 	});
 	servers.push(server);
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	return { bodies, port: (server.address() as AddressInfo).port };
+	return { bodies, headers, port: (server.address() as AddressInfo).port };
 }
 
 type CodexBody = { model: string; input: { type?: string; role?: string; content?: unknown; output?: unknown }[]; tools?: { name: string }[] };
@@ -214,7 +216,7 @@ function claudeHome(root: string) {
 }
 
 /** The program copied as an install lays it out, a pi agent folder pointing at the endpoint, and a working folder. */
-function layout(port: number, options: { images: Images; sameNamedShowMe?: boolean; claudeModel?: boolean }) {
+function layout(port: number, options: { images: Images; sameNamedShowMe?: boolean; claudeModel?: boolean; claudeApiKey?: string }) {
 	const root = mkdtempSync(join(tmpdir(), "durable-agent-real-"));
 	roots.push(root);
 	const programDir = join(root, "throughline/durable-agent");
@@ -246,7 +248,7 @@ function layout(port: number, options: { images: Images; sameNamedShowMe?: boole
 	mkdirSync(agentDir);
 	// The endpoint speaks one API: OpenAI's by default, Anthropic Messages (as Pi's own Anthropic provider does) for Claude.
 	const provider = options.claudeModel
-		? { "claude-local": { baseUrl: `http://127.0.0.1:${port}`, api: "anthropic-messages", apiKey: "local", models: [{ id: "claude-test" }] } }
+		? { "claude-local": { baseUrl: `http://127.0.0.1:${port}`, api: "anthropic-messages", apiKey: options.claudeApiKey ?? "local", models: [{ id: "claude-test" }] } }
 		: { local: { baseUrl: `http://127.0.0.1:${port}/v1`, api: "openai-completions", apiKey: "local", models: [{ id: "echo" }] } };
 	writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: provider }));
 	const claude = claudeHome(root);
@@ -494,6 +496,26 @@ test("a Claude model's request carries Claude Code's standard prompt first, and 
 	assert.ok(system.startsWith(RECORD_TEXT), `the standard prompt comes first: ${system.slice(0, 120)}`);
 	assert.ok(program.stderr().includes(`claude standard prompt: claude ${CLAUDE_VERSION} sha ${sha(RECORD_TEXT).slice(0, 12)}`), program.stderr());
 	await stop(program);
+});
+
+// Nov 17, 2026: every Claude Fable 5.2 turn on ThroughLine's Pi Provider was refused with 400 claude_code_version_too_old
+// ("Claude Code 2.1.280 does not support this model"), because Pi's Anthropic provider announces a Claude Code version
+// fixed in its source. This guards the mount in main.ts: without it the request says claude-cli/2.1.280 and this fails.
+test("a Claude subscription request announces the pinned Claude Code's version, and an API-key request keeps Pi's own user-agent", { timeout: 90_000 }, async () => {
+	const subscription = await anthropicEndpoint("ok");
+	const program = layout(subscription.port, { images: "none", claudeModel: true, claudeApiKey: "sk-ant-oat01-local-test" }).start();
+	await program.hello;
+	assert.equal(await turn(program, "hello", "v1"), "done", program.stderr());
+	assert.equal(subscription.headers[0]?.["user-agent"], `claude-cli/${CLAUDE_VERSION}`, program.stderr());
+	assert.ok(program.stderr().includes(`claude code version: claude-cli/${CLAUDE_VERSION} announced`), program.stderr());
+	await stop(program);
+
+	const apiKey = await anthropicEndpoint("ok");
+	const keyed = layout(apiKey.port, { images: "none", claudeModel: true }).start();
+	await keyed.hello;
+	assert.equal(await turn(keyed, "hello", "v2"), "done", keyed.stderr());
+	assert.match(String(apiKey.headers[0]?.["user-agent"]), /^pi\//, "an API-key request is not dressed as Claude Code");
+	await stop(keyed);
 });
 
 test("when the standard prompt cannot be had the program refuses to start, says why, and sends no Claude request", { timeout: 60_000 }, async () => {
