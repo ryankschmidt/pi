@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { check, install, readPin, rollback } from "../install/runtime.ts";
+import { check, DURABLE_CLIENT_MARKERS, install, missingClientMarkers, readPin, rollback } from "../install/runtime.ts";
 
 /** A tiny stand-in for the Pi fork: one workspace package with dist, a node_modules link to it, the agent entry. */
 function fakeFork(): string {
@@ -227,4 +227,14 @@ test("check run through a link (as the Health Hub adapter runs it) reports a mis
 	assert.equal(run.status, 1, run.stderr);
 	assert.match(run.stdout, /REGRESSED/);
 	assert.match(run.stdout, /no installed agent program/);
+});
+
+test("the app check's markers are all in ThroughLine main's Pi Durable client and mount, and a missing one is named", (t) => {
+	const fork = join(process.env.HOME ?? "", "throughline");
+	if (!existsSync(join(fork, ".git"))) return t.skip("no ThroughLine fork checkout on this machine");
+	const patterns = DURABLE_CLIENT_MARKERS.flatMap((m) => ["-e", m]);
+	const source = execFileSync("git", ["-C", fork, "grep", "-h", "-F", ...patterns, "main", "--", "apps/server/src/throughline/pi"], { encoding: "utf8" });
+	for (const marker of DURABLE_CLIENT_MARKERS) assert.ok(source.includes(marker), `ThroughLine main's apps/server/src/throughline/pi no longer carries "${marker}"`);
+	assert.deepEqual(missingClientMarkers(Buffer.from(DURABLE_CLIENT_MARKERS.join("\n"))), []);
+	assert.deepEqual(missingClientMarkers(Buffer.from(`${DURABLE_CLIENT_MARKERS[0]} routePiAdapter`)), [DURABLE_CLIENT_MARKERS[1]]);
 });

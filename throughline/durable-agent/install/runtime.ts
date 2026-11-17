@@ -49,8 +49,18 @@ const APP_ASAR = "/Applications/ThroughLine.app/Contents/Resources/app.asar";
 const THROUGHLINE_FORK = join(HOME, "throughline");
 const STATIC_CONFIG = join(HOME, ".local/state/ryan/fccl/static-shim-config.sh");
 const LAUNCHER = join(HOME, ".local/bin/ryan-pi");
-// Strings that exist only in ThroughLine's Pi Durable client (apps/server/src/throughline/pi/durable/).
-const DURABLE_CLIENT_MARKERS = ["Pi Durable agent program exited", "routePiAdapter"];
+/**
+ * String literals that survive bundling into app.asar and exist only in ThroughLine's Pi Durable client: the first in
+ * the client (apps/server/src/throughline/pi/durable/connection.ts), the second in the one-route mount that sends every
+ * Pi thread to it (apps/server/src/throughline/pi/PiAdapterGuards.ts, durableClientDeps). The earlier marker
+ * "routePiAdapter" lived in routing.ts, deleted with the stock Pi provider change (ThroughLine 7225a57952).
+ */
+export const DURABLE_CLIENT_MARKERS = ["Pi Durable agent program exited", "THROUGHLINE_PI_LAUNCHER"];
+
+/** The markers absent from an installed app's bytes; empty when the app carries the Pi Durable client and its mount. */
+export function missingClientMarkers(app: Buffer): string[] {
+	return DURABLE_CLIENT_MARKERS.filter((m) => app.indexOf(m) < 0);
+}
 /** The shipped image module (Ship Warden's Tier 2 copy); each install pins the two files the image tools import. */
 export const SHIPPED_IMAGE_MODULE = join(HOME, "core-root/src/tools/subscription-images");
 const CAPABILITIES = "throughline/durable-agent/capabilities";
@@ -332,9 +342,9 @@ export function check(runtime: string, imageModule = SHIPPED_IMAGE_MODULE, showM
 		problems.push(`ThroughLine is not installed at ${APP_ASAR}`);
 	} else {
 		const asar = readFileSync(APP_ASAR);
-		const missing = DURABLE_CLIENT_MARKERS.filter((m) => asar.indexOf(m) < 0);
+		const missing = missingClientMarkers(asar);
 		facts.app_has_durable_client = missing.length === 0;
-		if (missing.length) problems.push("the installed ThroughLine app lacks the Pi Durable client; Durable threads will not start");
+		if (missing.length) problems.push(`the installed ThroughLine app lacks the Pi Durable client (missing ${missing.join(", ")}); Durable threads will not start`);
 	}
 	return { ok: problems.length === 0, problems, facts };
 }
