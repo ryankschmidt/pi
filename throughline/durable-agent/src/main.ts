@@ -49,7 +49,7 @@ const { values } = parseArgs({
 		"carry-from": { type: "string" },
 	},
 });
-if (!values.store || !values.agent) {
+if (!values.store || !values.agent?.trim()) {
 	process.stderr.write(
 		"usage: main.ts --store <dir> --agent <id> --cwd <dir> [--model provider/model] [--runtime-mode <mode>]\n",
 	);
@@ -100,7 +100,7 @@ if (images.missing !== undefined) log(images.missing);
 // Set when the read socket cannot be created (program.ts); the prompt then tells the thread.
 let readsUnavailable: string | undefined;
 const registryWith = (imageExtension: typeof images.extension) =>
-	createAgentRegistry(resources, storeDir, {
+	createAgentRegistry(resources, storeDir, values.agent!, {
 		readsUnavailable: () => readsUnavailable,
 		// Claude Code's standard prompt renders before every other section.
 		first: [claudeStandard],

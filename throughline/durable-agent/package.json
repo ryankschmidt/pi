@@ -6,8 +6,8 @@
   "description": "The Pi Durable agent program: one process per agent store, serving Pi Durable calls as JSON lines over stdin and stdout.",
   "bin": { "pi-durable-agent": "src/main.ts" },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.5.0",
-    "@earendil-works/pi-schema": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@earendil-works/pi-schema": "1.5.2",
     "undici": "8.12.3"
   },
   "scripts": {

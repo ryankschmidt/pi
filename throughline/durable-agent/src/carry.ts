@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { ContextEdit, Conversation, EntryDraft, EntryId, Harness } from "@earendil-works/pi-durable";
 // The carried-ids document is owned by its reader, the rewind, which keeps reading stock-era turn refs after carrying ends.
 import { CarriedDoc } from "./rewind.ts";

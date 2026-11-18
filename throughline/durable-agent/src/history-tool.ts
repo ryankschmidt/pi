@@ -3,7 +3,7 @@
 // compaction the agent reaches its earlier work here instead of trusting the summary alone. It only reads committed
 // entries and keeps no state, so it is replay-safe: a restart mid-call reads again and changes nothing.
 
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import {
 	defineExtension,
 	defineTool,

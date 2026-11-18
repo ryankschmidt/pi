@@ -10,6 +10,8 @@
 //
 //   node install/runtime.ts install  [--from <pi fork root>] [--runtime <dir>] [--throughline-commit <sha>] [--skip-tests]
 //                                    [--image-module <shipped subscription-images folder>] [--show-me <shipped show-me.md>]
+//   node install/runtime.ts stage    [--from <pi fork root>] [--runtime <dir>] [--throughline-commit <sha>]
+//   node install/runtime.ts promote <id> --pin-sha256 <reviewed pin hash> [--runtime <dir>]
 //   node install/runtime.ts rollback [--runtime <dir>]
 //   node install/runtime.ts check    [--runtime <dir>] [--service <health hub service json>] [--json]
 //
@@ -108,6 +110,7 @@ export interface Pin {
 	tree_files: number;
 	entry: string;
 	previous: string | null;
+	tests_passed?: boolean;
 }
 
 /** sha256 over sorted "relative path\0kind\0content-hash" lines; symlinks hash their link text. */
@@ -180,7 +183,7 @@ export function readPin(runtime: string): Pin | null {
 	return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Pin) : null;
 }
 
-export async function install(
+async function stageCopy(
 	from: string,
 	runtime: string,
 	throughlineCommit: string | null,
@@ -261,11 +264,68 @@ export async function install(
 		tree_files: tree.files,
 		entry: join(runtime, "current", ENTRY),
 		previous,
+		tests_passed: options.runTests === true,
 	};
 	writeFileSync(join(target, "Pin.json"), `${JSON.stringify(pin, null, 2)}\n`);
 	setWritable(target, false);
+	return pin;
+}
+
+/** Prepare one tested, read-only version without changing the active program. */
+export async function stage(
+	from: string,
+	runtime: string,
+	throughlineCommit: string | null,
+	options: { runTests?: boolean; imageModule?: string; showMe?: string } = {},
+): Promise<Pin> {
+	if (options.runTests === false) throw new Error("refused: staging requires the candidate's tests; current is unchanged.");
+	return stageCopy(from, runtime, throughlineCommit, { ...options, runTests: true });
+}
+
+function activate(runtime: string, id: string, requireTests: boolean, expectedPinSha256: string): Pin {
+	if (!/^[a-zA-Z0-9-]+$/.test(id)) throw new Error("refused: invalid staged version ID; current is unchanged.");
+	const target = join(runtime, "versions", id);
+	const pinBytes = readFileSync(join(target, "Pin.json"));
+	if (!/^[a-f0-9]{64}$/.test(expectedPinSha256) || createHash("sha256").update(pinBytes).digest("hex") !== expectedPinSha256) {
+		throw new Error("refused: candidate pin does not match the reviewed pin hash; current is unchanged.");
+	}
+	const pin = JSON.parse(pinBytes.toString("utf8")) as Pin;
+	if (pin.schema !== PIN_SCHEMA || pin.id !== id) throw new Error("refused: candidate pin does not match the staged version; current is unchanged.");
+	if (requireTests && pin.tests_passed !== true) throw new Error("refused: candidate tests have not passed; current is unchanged.");
+	const current = readPin(runtime)?.id ?? null;
+	if (current !== pin.previous) throw new Error("refused: current version changed since staging; current is unchanged.");
+	if (current !== null) {
+		if (readlinkSync(join(runtime, "current")) !== join("versions", current)) throw new Error("refused: current link changed since staging.");
+		const previous = JSON.parse(readFileSync(join(runtime, "versions", current, "Pin.json"), "utf8")) as Pin;
+		if (previous.id !== current) throw new Error("refused: previous version pin is missing or mismatched; current is unchanged.");
+	}
+	if (git(pin.pi_fork, "rev-parse", "HEAD") !== pin.pi_commit || git(pin.pi_fork, "status", "--porcelain", "--untracked-files=no")) {
+		throw new Error("refused: fork commit or tracked files changed since staging; current is unchanged.");
+	}
+	const program = treeHash(target, programRoots(target));
+	const tree = treeHash(target, COPIED.map((p) => join(target, p)));
+	if (program.sha256 !== pin.program_sha256 || program.files !== pin.program_files || tree.sha256 !== pin.tree_sha256 || tree.files !== pin.tree_files) {
+		throw new Error("refused: staged program or capability hash changed after testing; current is unchanged.");
+	}
 	pointCurrent(runtime, id);
 	return pin;
+}
+
+/** Promote the exact tested staged bytes, only if the fork and current version are unchanged. */
+export function promote(runtime: string, id: string, pinSha256: string): Pin {
+	return activate(runtime, id, true, pinSha256);
+}
+
+/** Keep the ordinary install's copy, test and immediate-switch behavior. */
+export async function install(
+	from: string,
+	runtime: string,
+	throughlineCommit: string | null,
+	options: { runTests?: boolean; imageModule?: string; showMe?: string } = {},
+): Promise<Pin> {
+	const pin = await stageCopy(from, runtime, throughlineCommit, options);
+	const pinSha256 = createHash("sha256").update(`${JSON.stringify(pin, null, 2)}\n`).digest("hex");
+	return activate(runtime, pin.id, false, pinSha256);
 }
 
 export function rollback(runtime: string): Pin {
@@ -378,18 +438,24 @@ async function main(): Promise<void> {
 			"skip-tests": { type: "boolean", default: false },
 			"image-module": { type: "string", default: SHIPPED_IMAGE_MODULE },
 			"show-me": { type: "string", default: SHIPPED_SHOW_ME },
+			"pin-sha256": { type: "string" },
 		},
 	});
 	const runtime = resolve(values.runtime as string);
 	const verb = positionals[0];
 	try {
-		if (verb === "install") {
-			const pin = await install(resolve(values.from as string), runtime, (values["throughline-commit"] as string) ?? null, {
+		if (verb === "install" || verb === "stage") {
+			if (verb === "stage" && values["skip-tests"]) throw new Error("refused: staging cannot skip the candidate tests; current is unchanged.");
+			const prepare = verb === "stage" ? stage : install;
+			const pin = await prepare(resolve(values.from as string), runtime, (values["throughline-commit"] as string) ?? null, {
 					runTests: !values["skip-tests"],
 					imageModule: resolve(values["image-module"] as string),
 					showMe: resolve(values["show-me"] as string),
 				});
 			console.log(JSON.stringify(pin, null, 2));
+		} else if (verb === "promote") {
+			if (!positionals[1] || !values["pin-sha256"]) throw new Error("refused: name the staged version and its reviewed pin hash; current is unchanged.");
+			console.log(JSON.stringify(promote(runtime, positionals[1], values["pin-sha256"] as string), null, 2));
 		} else if (verb === "rollback") {
 			console.log(JSON.stringify(rollback(runtime), null, 2));
 		} else if (verb === "check") {
@@ -398,7 +464,7 @@ async function main(): Promise<void> {
 			console.log(values.json ? JSON.stringify(result, null, 2) : result.ok ? "pi-durable-guard: holds" : `pi-durable-guard: REGRESSED\n- ${result.problems.join("\n- ")}`);
 			process.exitCode = result.ok ? 0 : 1;
 		} else {
-			console.error("usage: runtime.ts install|rollback|check [--runtime <dir>] [--from <pi root>] [--throughline-commit <sha>] [--service <file>] [--json]");
+			console.error("usage: runtime.ts install|stage|promote <id> --pin-sha256 <sha>|rollback|check [--runtime <dir>] [--from <pi root>] [--throughline-commit <sha>] [--service <file>] [--json]");
 			process.exitCode = 2;
 		}
 	} catch (error) {

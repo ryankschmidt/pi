@@ -6,7 +6,8 @@
 
 import { existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { compile, type JsonSchema } from "@earendil-works/pi-schema";
 import {
 	defineExtension,

@@ -5,7 +5,7 @@
 // That reader is not a retiring path: turns are never deleted, so it stays while any carried thread exists. carry.ts,
 // the writer, can go on its own removal date; it imports the definition from here.
 
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import {
 	type Conversation,
 	type ConversationId,

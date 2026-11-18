@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { Conversation, EntryId } from "@earendil-works/pi-durable";
 import { encode, type ProgramMessage } from "./protocol.ts";
 

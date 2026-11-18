@@ -216,7 +216,7 @@ function claudeHome(root: string) {
 }
 
 /** The program copied as an install lays it out, a pi agent folder pointing at the endpoint, and a working folder. */
-function layout(port: number, options: { images: Images; sameNamedShowMe?: boolean; claudeModel?: boolean; claudeApiKey?: string }) {
+function layout(port: number, options: { images: Images; sameNamedShowMe?: boolean; claudeModel?: boolean; claudeApiKey?: string; agentId?: string }) {
 	const root = mkdtempSync(join(tmpdir(), "durable-agent-real-"));
 	roots.push(root);
 	const programDir = join(root, "throughline/durable-agent");
@@ -279,7 +279,7 @@ function layout(port: number, options: { images: Images; sameNamedShowMe?: boole
 	const start = (env: NodeJS.ProcessEnv = {}): AgentProgram => {
 		const started = startProgram(
 			process.execPath,
-			[join(programDir, "src/main.ts"), "--store", join(root, "store"), "--agent", "real-agent", "--cwd", cwd, "--model", options.claudeModel ? "claude-local/claude-test" : "local/echo"],
+			[join(programDir, "src/main.ts"), "--store", join(root, "store"), "--agent", options.agentId ?? "real-agent", "--cwd", cwd, "--model", options.claudeModel ? "claude-local/claude-test" : "local/echo"],
 			{ env: { ...process.env, HOME: claude.home, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1", ...env } },
 		);
 		programs.push(started);
@@ -765,4 +765,28 @@ test("a SIGTERM while an approval waits: the restarted program asks the same que
 	assert.equal(readFileSync(join(setup.cwd, "witness.txt"), "utf8"), "once\n");
 	assert.equal(model.bodies.length, 2, "one request after the tool result");
 	await stop(second);
+});
+
+test("Durable bash receives the bound agent ID, clears stale Pi session files and keeps other environment values across restart and stores", { timeout: 90_000 }, async () => {
+	const model = await modelEndpoint((body) => body.messages.at(-1)?.role === "tool"
+		? { text: "done" }
+		: { tool: "bash", args: { command: "printf '%s|%s|%s' \"$PI_SESSION_ID\" \"${PI_SESSION_FILE-unset}\" \"$WITNESS_ENV\" > identity.txt" } });
+	const env = { PI_SESSION_ID: "stale-other-agent", PI_SESSION_FILE: "/wrong/session.jsonl", WITNESS_ENV: "kept" };
+	const first = layout(model.port, { images: "none", agentId: "pi-first-agent" });
+	const second = layout(model.port, { images: "none", agentId: "pi-second-agent" });
+	const run = async (setup: typeof first, id: string, request: string) => {
+		const program = setup.start(env);
+		const asked = new Promise<{ key: string; tool: string }>((resolve) => program.onQuestion(resolve));
+		await program.hello;
+		const { submissionId } = (await program.call("submit", { conversationId: await program.root(), content: "run bash", requestId: request })) as { submissionId: number };
+		const question = await asked;
+		assert.equal(question.tool, "bash");
+		await program.call("answer", { key: question.key, answer: "accept" });
+		assert.equal(((await program.call("wait", { submissionId })) as { status: string }).status, "done", program.stderr());
+		assert.equal(readFileSync(join(setup.cwd, "identity.txt"), "utf8"), `${id}|unset|kept`);
+		await stop(program);
+	};
+	await run(first, "pi-first-agent", "first");
+	await run(first, "pi-first-agent", "restart");
+	await run(second, "pi-second-agent", "second");
 });

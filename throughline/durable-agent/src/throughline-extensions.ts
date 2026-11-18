@@ -8,7 +8,7 @@
 // the ThroughLine fork), keeping its rules: full access asks nothing, read-only tools pass, auto-accept-edits passes
 // edit and write, and a declined call is blocked with "<tool> was declined in ThroughLine."
 
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { awaitWithContext } from "@earendil-works/chord/context";
 import {
 	defineExtension,

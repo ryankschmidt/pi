@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	formatSkillsForPrompt,
@@ -34,7 +34,7 @@ import {
 	section,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 
 export { ModelRuntime, SettingsManager };
 
@@ -291,11 +291,23 @@ export function createPiPrompt(resources: AgentResources, storeDir: string, read
 export function createAgentRegistry(
 	resources: AgentResources,
 	storeDir: string,
+	agentId: string,
 	extra: { first?: readonly Extension[]; after?: readonly Extension[]; readsUnavailable?: () => string | undefined } = {},
 ): Registry {
 	const registry = createRegistry();
 	for (const extension of extra.first ?? []) registry.install(extension);
-	registry.install(CodingTools);
+	registry.install(defineExtension({
+		name: "coding-tools",
+		tools: [createReadTool(), createWriteTool(), createEditTool(), createBashTool({
+			prepare(execution) {
+				// Do not let an inherited stock Pi identity impersonate this Durable store.
+				execution.env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] =>
+					entry[1] !== undefined && entry[0] !== "PI_SESSION_ID" && entry[0] !== "PI_SESSION_FILE"));
+				execution.env.PI_SESSION_ID = agentId;
+				execution.inheritEnv = false;
+			},
+		})],
+	}));
 	registry.install(createPiPrompt(resources, storeDir, extra.readsUnavailable));
 	for (const extension of extra.after ?? []) registry.install(extension);
 	return registry;

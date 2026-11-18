@@ -7,6 +7,9 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { check, DURABLE_CLIENT_MARKERS, install, missingClientMarkers, readPin, rollback } from "../install/runtime.ts";
+import * as runtimeInstaller from "../install/runtime.ts";
+
+const pinHash = (runtime: string, id: string) => createHash("sha256").update(readFileSync(join(runtime, "versions", id, "Pin.json"))).digest("hex");
 
 /** A tiny stand-in for the Pi fork: one workspace package with dist, a node_modules link to it, the agent entry. */
 function fakeFork(): string {
@@ -20,6 +23,7 @@ function fakeFork(): string {
 	file("packages/durable/dist/index.js", "export const x = 1;\n");
 	file("throughline/durable-agent/package.json", '{"name":"agent"}');
 	file("throughline/durable-agent/src/main.ts", 'console.log("agent");\n');
+	for (const name of ["program", "carry", "reaper", "agent", "setup"]) file(`throughline/durable-agent/test/${name}.test.ts`, 'import { test } from "node:test"; test("fixture", () => {});\n');
 	mkdirSync(join(root, "node_modules/@earendil-works"), { recursive: true });
 	symlinkSync("../../packages/durable", join(root, "node_modules/@earendil-works/pi-durable"));
 	const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { stdio: "ignore" });
@@ -28,6 +32,70 @@ function fakeFork(): string {
 	git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "fork");
 	return root;
 }
+
+test("stage leaves current alone; promotion rejects changed candidates and changed current", async () => {
+	assert.equal(typeof (runtimeInstaller as Record<string, unknown>).stage, "function", "the installer must stage without switching");
+	assert.equal(typeof (runtimeInstaller as Record<string, unknown>).promote, "function", "the installer must promote the exact staged copy");
+	const { stage, promote } = runtimeInstaller as typeof runtimeInstaller & {
+		stage: typeof install;
+		promote: (runtime: string, id: string, hash: string) => ReturnType<typeof readPin>;
+	};
+	const fork = fakeFork();
+	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-stage-"));
+	const options = { imageModule: fakeImageModule(), showMe: fakeShowMe(), runTests: true };
+	const first = await install(fork, runtime, null, options);
+	const candidate = await stage(fork, runtime, null, options);
+	assert.equal(readPin(runtime)?.id, first.id, "staging does not switch the live link");
+	assert.equal(candidate.previous, first.id);
+	const file = join(runtime, "versions", candidate.id, "throughline/durable-agent/src/main.ts");
+	chmodSync(file, 0o644);
+	writeFileSync(file, 'console.log("changed after proof");\n');
+	assert.throws(() => promote(runtime, candidate.id, pinHash(runtime, candidate.id)), /changed|hash/i);
+	assert.equal(readPin(runtime)?.id, first.id);
+	const later = await stage(fork, runtime, null, options);
+	const replacement = await install(fork, runtime, null, options);
+	assert.throws(() => promote(runtime, later.id, pinHash(runtime, later.id)), /current|previous/i);
+	assert.equal(readPin(runtime)?.id, replacement.id);
+	const good = await stage(fork, runtime, null, options);
+	assert.equal(promote(runtime, good.id, pinHash(runtime, good.id))?.id, good.id, "the tested copy itself becomes current");
+	assert.equal(rollback(runtime).id, replacement.id, "ordinary rollback returns to the old version");
+	const unsafe = await install(fork, runtime, null, { ...options, runTests: false });
+	assert.throws(() => promote(runtime, unsafe.id, pinHash(runtime, unsafe.id)), /tests have not passed/i);
+	assert.equal(readPin(runtime)?.id, unsafe.id, "ordinary install retains its existing test option");
+});
+
+test("promotion refuses a missing previous version or changed source, and stage refuses skipped tests", async () => {
+	const api = runtimeInstaller as typeof runtimeInstaller & { stage: typeof install; promote: (runtime: string, id: string, hash: string) => unknown };
+	const fork = fakeFork();
+	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-refusal-"));
+	const options = { imageModule: fakeImageModule(), showMe: fakeShowMe(), runTests: true };
+	await assert.rejects(api.stage(fork, runtime, null, { ...options, runTests: false }), /requires.*tests/i);
+	const first = await install(fork, runtime, null, options);
+	const candidate = await api.stage(fork, runtime, null, options);
+	writeFileSync(join(fork, "throughline/durable-agent/src/main.ts"), "// changed after stage\n");
+	assert.throws(() => api.promote(runtime, candidate.id, pinHash(runtime, candidate.id)), /fork commit or tracked files changed/i);
+	assert.equal(readPin(runtime)?.id, first.id);
+	execFileSync("git", ["-C", fork, "checkout", "--", "throughline/durable-agent/src/main.ts"]);
+	const previousPin = join(runtime, "versions", first.id, "Pin.json");
+	chmodSync(dirname(previousPin), 0o755);
+	chmodSync(previousPin, 0o644);
+	rmSync(previousPin);
+	assert.throws(() => api.promote(runtime, candidate.id, pinHash(runtime, candidate.id)), /ENOENT|previous|current/i);
+});
+
+test("promotion refuses a changed candidate pin even when its program bytes are unchanged", async () => {
+	const api = runtimeInstaller as typeof runtimeInstaller & { stage: typeof install; promote: (runtime: string, id: string, pinSha256: string) => unknown };
+	const fork = fakeFork();
+	const runtime = mkdtempSync(join(tmpdir(), "pi-runtime-pin-"));
+	const candidate = await api.stage(fork, runtime, null, { imageModule: fakeImageModule(), showMe: fakeShowMe(), runTests: true });
+	const path = join(runtime, "versions", candidate.id, "Pin.json");
+	const bytes = readFileSync(path);
+	const pinHash = createHash("sha256").update(bytes).digest("hex");
+	chmodSync(path, 0o644);
+	writeFileSync(path, `${JSON.stringify({ ...JSON.parse(bytes.toString()), throughline_commit: "unreviewed" }, null, 2)}\n`);
+	assert.throws(() => api.promote(runtime, candidate.id, pinHash), /pin.*hash/i);
+	assert.equal(readPin(runtime), null, "the active program is unchanged");
+});
 
 const IMAGE_TOOLS = ["generate_image", "edit_image", "inspect_image"];
 
