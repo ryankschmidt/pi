@@ -1,0 +1,130 @@
+{
+  "schema": "throughline.upstream-pin-transition.v1",
+  "requested_by": "codex-01a1f0d5",
+  "approved_by": "jev-gate",
+  "approved_at": "2026-11-18T22:59:08.408Z",
+  "reason": "ThroughLine starts a Pi Durable agent built on upstream Pi 1.5.0 while stock Pi is already 1.5.2. Merge the upstream 1.5.2 release into the fork so the next installed Pi Durable program can use that release, while preserving ThroughLine customizations and changing zero stock files relative to the new release.",
+  "from_pin": "f9a26365568127461c47a07a37dcb42c140a3ac5",
+  "to_pin": "b4afdddf44e059c67ccf5097e5317d913521b470",
+  "merge_parent": "a77acc0607ff61c036e413859fb30b2e55021ae5",
+  "max_count": 0,
+  "jev_decision": {
+    "schema": "throughline.jev-gate-decision.v1",
+    "gate": "jev-gate",
+    "question_version": "tax-jev-gate.q1",
+    "facts": {
+      "repository": "pi",
+      "head": "a77acc0607ff61c036e413859fb30b2e55021ae5",
+      "staged_tree": "00170eb1c3adf4e3c5e98950a4a0cbdadfc2e7cb",
+      "requested_by": "codex-01a1f0d5",
+      "reason": "ThroughLine starts a Pi Durable agent built on upstream Pi 1.5.0 while stock Pi is already 1.5.2. Merge the upstream 1.5.2 release into the fork so the next installed Pi Durable program can use that release, while preserving ThroughLine customizations and changing zero stock files relative to the new release.",
+      "kind": "pin-transition",
+      "from_pin": "f9a26365568127461c47a07a37dcb42c140a3ac5",
+      "to_pin": "b4afdddf44e059c67ccf5097e5317d913521b470",
+      "merge_parent": "a77acc0607ff61c036e413859fb30b2e55021ae5",
+      "previous_baseline_count": 0,
+      "count": 0,
+      "max_count": 0,
+      "change": {
+        "entries": [],
+        "plan": null
+      },
+      "seam_check": {
+        "ok": true,
+        "violations": []
+      },
+      "code_checks": [
+        {
+          "id": "requester-named",
+          "ok": true,
+          "detail": "requested_by is named and is not the gate"
+        },
+        {
+          "id": "reason-present",
+          "ok": true,
+          "detail": "a reason is written"
+        },
+        {
+          "id": "seam-check",
+          "ok": true,
+          "detail": "seam check with mounts passed"
+        },
+        {
+          "id": "to-pin-sha",
+          "ok": true,
+          "detail": "the new pin is a full commit id"
+        },
+        {
+          "id": "pin-moves",
+          "ok": true,
+          "detail": "the new pin differs from the current pin"
+        },
+        {
+          "id": "staged-ledger",
+          "ok": true,
+          "detail": "the staged tree carries a readable ledger"
+        },
+        {
+          "id": "staged-pin",
+          "ok": true,
+          "detail": "the staged ledger names the new pin in both places"
+        },
+        {
+          "id": "to-pin-upstream",
+          "ok": true,
+          "detail": "the new pin is an ancestor of the fetched upstream/main"
+        },
+        {
+          "id": "target-unchanged",
+          "ok": true,
+          "detail": "the target count is unchanged"
+        },
+        {
+          "id": "baseline-fork",
+          "ok": true,
+          "detail": "the staged baseline_fork is HEAD, the merge parent"
+        },
+        {
+          "id": "count-measured",
+          "ok": true,
+          "detail": "measured 0 stock files edited at the new pin; the staged baseline says 0"
+        },
+        {
+          "id": "count-history-row",
+          "ok": true,
+          "detail": "the first new-pin history row witnesses the measured count"
+        },
+        {
+          "id": "ledger-lists-approval",
+          "ok": true,
+          "detail": "the staged ledger lists the approval file docs/throughline/tax-approvals/upstream-pin-transition-2026-11-18.json"
+        }
+      ]
+    },
+    "facts_sha256": "47b755997c517a577a96ae8877cdfb021443a5153ac200db0088e371fcc5ab40",
+    "jev": {
+      "request_id": "tax-jev-gate-fa10f3a3-d851-441e-a8b4-6f3bb0ff8462",
+      "model": "jev-1.14.0",
+      "answers": {
+        "reason_states_purpose": 0.98,
+        "change_puts_logic_in_stock_file": 0.01,
+        "reason_contradicts_facts": 0.1
+      },
+      "usage": {
+        "input_tokens": 1029,
+        "output_tokens": 67
+      }
+    },
+    "jev_refusal": null,
+    "verdict": "approve",
+    "reasons": [
+      "code checks passed",
+      "jev: all three answers inside the approve band"
+    ],
+    "route": "approval-written",
+    "reasoning_seat_reason": null,
+    "decided_at": "2026-11-18T22:59:08.408Z",
+    "refusal_meaning": [],
+    "next_step": null
+  }
+}

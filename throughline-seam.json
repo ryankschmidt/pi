@@ -2,7 +2,7 @@
   "schema": "throughline.seam-manifest.v1",
   "upstream": {
     "remote_url": "https://github.com/earendil-works/pi.git",
-    "sha": "f9a26365568127461c47a07a37dcb42c140a3ac5"
+    "sha": "b4afdddf44e059c67ccf5097e5317d913521b470"
   },
   "fork": {
     "sha": "b74ae5e27d702296c9ded87677317c4d69816b31"
@@ -2012,12 +2012,13 @@
     "schema": "throughline.upstream-tax-policy.v1",
     "baseline_count": 0,
     "target_count": 0,
-    "baseline_fork": "ffa290abeff17e5aab57cee86cc85db899cd0ea9",
-    "pinned_upstream": "f9a26365568127461c47a07a37dcb42c140a3ac5",
+    "baseline_fork": "a77acc0607ff61c036e413859fb30b2e55021ae5",
+    "pinned_upstream": "b4afdddf44e059c67ccf5097e5317d913521b470",
     "approved_growth_files": [],
     "approved_swap_files": [],
     "approved_pin_transitions": [
-      "docs/throughline/tax-approvals/upstream-pin-transition-2026-11-04.json"
+      "docs/throughline/tax-approvals/upstream-pin-transition-2026-11-04.json",
+      "docs/throughline/tax-approvals/upstream-pin-transition-2026-11-18.json"
     ],
     "count_history": [
       {
@@ -2027,6 +2028,14 @@
         "staged": true,
         "label": "Fold of upstream v1.5.0: zero stock-file edits at the new pin",
         "approval_file": "docs/throughline/tax-approvals/upstream-pin-transition-2026-11-04.json"
+      },
+      {
+        "fork": "a77acc0607ff61c036e413859fb30b2e55021ae5",
+        "upstream": "b4afdddf44e059c67ccf5097e5317d913521b470",
+        "count": 0,
+        "staged": true,
+        "label": "Fold of upstream v1.5.2: zero stock-file edits at the new pin",
+        "approval_file": "docs/throughline/tax-approvals/upstream-pin-transition-2026-11-18.json"
       }
     ]
   },
