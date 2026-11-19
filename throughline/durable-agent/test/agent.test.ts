@@ -498,6 +498,33 @@ test("a Claude model's request carries Claude Code's standard prompt first, and 
 	await stop(program);
 });
 
+test("without FCCL config the real program resolves Claude on PATH and still puts its standard prompt first", { timeout: 60_000 }, async () => {
+	const model = await anthropicEndpoint("ok");
+	const setup = layout(model.port, { images: "none", claudeModel: true });
+	const config = join(setup.claude.home, ".local/state/ryan/fccl/static-shim-config.json");
+	rmSync(config);
+	const bin = join(setup.root, "bin"); mkdirSync(bin);
+	symlinkSync(setup.claude.claudeBin, join(bin, "claude"));
+	const program = setup.start({ PATH: `${bin}:/usr/bin:/bin` });
+	await program.hello;
+	assert.equal(await turn(program, "hello", "path-claude"), "done", program.stderr());
+	assert.ok(anthropicSystem(model.bodies[0]).startsWith(CAPTURED_TEXT), "the real pinned binary supplied the prompt");
+	assert.ok(program.stderr().includes(`claude standard prompt: claude ${CLAUDE_VERSION}`), program.stderr());
+	await stop(program);
+});
+
+test("without FCCL config or a pinned Claude on PATH the real program refuses before any model request", { timeout: 60_000 }, async () => {
+	const model = await modelEndpoint([{ text: "ok" }]);
+	const setup = layout(model.port, { images: "none" });
+	rmSync(join(setup.claude.home, ".local/state/ryan/fccl/static-shim-config.json"));
+	const bin = join(setup.root, "empty-path"); mkdirSync(bin);
+	const program = setup.start({ PATH: bin });
+	await assert.rejects(program.hello);
+	assert.equal(await program.exited, EXIT.promptUnavailable);
+	assert.match(program.stderr(), /^CLAUDE_STANDARD_PROMPT_UNAVAILABLE: .*not found.*PATH.*non-negotiable/m);
+	assert.equal(model.bodies.length, 0, "even a non-Claude model must not start without the prompt");
+});
+
 // Nov 17, 2026: every Claude Fable 5.2 turn on ThroughLine's Pi Provider was refused with 400 claude_code_version_too_old
 // ("Claude Code 2.1.280 does not support this model"), because Pi's Anthropic provider announces a Claude Code version
 // fixed in its source. This guards the mount in main.ts: without it the request says claude-cli/2.1.280 and this fails.

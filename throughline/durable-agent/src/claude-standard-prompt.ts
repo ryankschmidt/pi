@@ -87,7 +87,7 @@ export function createClaudeStandardPromptExtension(
 
 /** Cached per pinned binary: the standard prompt changes only when the Claude Code pin moves. Any unusable record is recaptured. */
 export async function loadStandardPrompt(claudeBin = pinnedClaude(), stateDir = STATE_DIR): Promise<StandardPrompt> {
-  const version = path.basename(claudeBin);
+  const version = pinnedClaudeVersion(claudeBin);
   const cachePath = path.join(stateDir, `standard-prompt-${version.replace(/[^A-Za-z0-9._-]/g, "-")}.json`);
   const hit = cachedPrompt(cachePath, claudeBin);
   if (hit !== undefined) return hit;
@@ -108,12 +108,48 @@ export async function loadStandardPrompt(claudeBin = pinnedClaude(), stateDir = 
   return record;
 }
 
-/** The pinned Claude Code: the binary the governed `claude` launcher runs, named by the FCCL config's real_targets.claude. */
-export function pinnedClaude(configPath = path.join(os.homedir(), ".local/state/ryan/fccl/static-shim-config.json")): string {
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as { real_targets?: { claude?: unknown } } | null;
-  const claude = config?.real_targets?.claude;
-  if (typeof claude !== "string" || !path.isAbsolute(claude)) throw new Error(`${configPath} names no absolute real_targets.claude`);
-  return claude;
+/** Version comes from the pinned versions entry, whether it is the executable or a directory containing it. */
+function pinnedClaudeVersion(binary: string): string {
+  const parts = path.resolve(binary).split(path.sep);
+  const index = parts.lastIndexOf("versions");
+  const version = index >= 0 ? parts[index + 1] : undefined;
+  if (!version || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error(`Claude executable is not in a versioned versions/<version> path: ${binary}`);
+  }
+  return version;
+}
+
+/** Resolve the real pinned Claude binary from FCCL when present, otherwise the calling server's PATH. */
+export function pinnedClaude(
+  configPath = path.join(os.homedir(), ".local/state/ryan/fccl/static-shim-config.json"),
+  searchPath = process.env.PATH,
+): string {
+  let configured = true;
+  try { fs.lstatSync(configPath); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    configured = false;
+  }
+  if (configured) {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as { real_targets?: { claude?: unknown } } | null;
+    const claude = config?.real_targets?.claude;
+    if (typeof claude !== "string" || !path.isAbsolute(claude)) throw new Error(`${configPath} names no absolute real_targets.claude`);
+    if (!fs.statSync(claude).isFile()) throw new Error(`${claude} is not a Claude executable file`);
+    fs.accessSync(claude, fs.constants.X_OK);
+    pinnedClaudeVersion(claude);
+    return claude;
+  }
+  if (!searchPath) throw new Error("Claude executable cannot be resolved: PATH is empty or missing");
+  for (const dir of searchPath.split(path.delimiter)) {
+    const candidate = path.resolve(dir || ".", "claude");
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+    } catch { continue; }
+    const binary = fs.realpathSync(candidate);
+    pinnedClaudeVersion(binary);
+    return binary;
+  }
+  throw new Error("Claude executable was not found as an executable on PATH");
 }
 
 // A missing, torn, other-binary, altered or unusable record is a miss, never a refusal: the capture replaces it.

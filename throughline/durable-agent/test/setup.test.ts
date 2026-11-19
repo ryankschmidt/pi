@@ -2,7 +2,8 @@
 // model runtime and settings and real local servers: these parts replaced coding-agent code and are owned here now.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { type AddressInfo, connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -12,11 +13,55 @@ import { fileURLToPath } from "node:url";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_COMPACTION_POLICY } from "@earendil-works/pi-durable";
 import { compactionSettings, harnessSettings, initialModel } from "../src/setup.ts";
+import { loadStandardPrompt, pinnedClaude } from "../src/claude-standard-prompt.ts";
 
 const PROBE = fileURLToPath(new URL("./fixtures/http-probe.ts", import.meta.url));
 const closers: (() => void)[] = [];
 after(() => {
 	for (const close of closers) close();
+});
+
+test("Claude pin uses the FCCL config when present and otherwise resolves the first executable on PATH", () => {
+	const root = mkdtempSync(join(tmpdir(), "durable-claude-pin-"));
+	try {
+		const versions = join(root, "versions");
+		const bin = join(root, "bin");
+		mkdirSync(versions); mkdirSync(bin);
+		const real = join(versions, "2.1.327");
+		writeFileSync(real, "#!/bin/sh\nexit 1\n"); chmodSync(real, 0o755);
+		symlinkSync(real, join(bin, "claude"));
+		const config = join(root, "config.json");
+		assert.equal(pinnedClaude(config, bin), realpathSync(real), "without config the PATH symlink resolves to the pinned binary");
+		const configured = join(versions, "2.1.326");
+		writeFileSync(configured, "#!/bin/sh\nexit 1\n"); chmodSync(configured, 0o755);
+		writeFileSync(config, JSON.stringify({ real_targets: { claude: configured } }));
+		assert.equal(pinnedClaude(config, bin), configured, "an existing FCCL config remains authoritative");
+		rmSync(configured);
+		assert.throws(() => pinnedClaude(config, bin), /ENOENT|not found|missing/i, "a missing configured binary must not fall back");
+		const directory = join(versions, "2.1.325"); mkdirSync(directory);
+		writeFileSync(config, JSON.stringify({ real_targets: { claude: directory } }));
+		assert.throws(() => pinnedClaude(config, bin), /file|binary|executable/i, "a directory is not an executable Claude binary");
+		writeFileSync(config, "{broken");
+		assert.throws(() => pinnedClaude(config, bin), /JSON|property|position/i, "a broken config must not fall back");
+		rmSync(config);
+		assert.throws(() => pinnedClaude(config, join(root, "missing")), /claude|PATH/i);
+		const unversioned = join(root, "plain-claude");
+		writeFileSync(unversioned, "#!/bin/sh\nexit 1\n"); chmodSync(unversioned, 0o755);
+		rmSync(join(bin, "claude")); symlinkSync(unversioned, join(bin, "claude"));
+		assert.throws(() => pinnedClaude(config, bin), /version/i, "the PATH target must be versioned");
+	} finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Claude prompt cache takes the version from a versioned executable directory", async () => {
+	const root = mkdtempSync(join(tmpdir(), "durable-claude-version-"));
+	try {
+		const folder = join(root, "versions", "2.1.327", "bin");
+		const state = join(root, "state"); mkdirSync(folder, { recursive: true }); mkdirSync(state);
+		const binary = join(folder, "claude"); writeFileSync(binary, "#!/bin/sh\nexit 1\n"); chmodSync(binary, 0o755);
+		const text = "Valid standard prompt. ".repeat(80);
+		writeFileSync(join(state, "standard-prompt-2.1.327.json"), JSON.stringify({ claude_bin: binary, claude_version: "2.1.327", text, sha256: createHash("sha256").update(text).digest("hex"), first_line: text, captured_at: "2026-01-01T00:00:00Z" }));
+		assert.equal((await loadStandardPrompt(binary, state)).claude_version, "2.1.327");
+	} finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 async function runtimeWithModels(): Promise<ModelRuntime> {
